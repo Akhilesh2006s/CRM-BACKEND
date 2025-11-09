@@ -103,18 +103,23 @@ const createLead = async (req, res) => {
 // @access  Private
 const updateLead = async (req, res) => {
   try {
-    const lead = await Lead.findByIdAndUpdate(
+    const lead = await Lead.findById(req.params.id);
+
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found' });
+    }
+
+    // For leads, we'll store history in a simple format
+    // Since Lead model doesn't have updateHistory, we'll update directly
+    // History can be tracked via timestamps and status changes
+    const updatedLead = await Lead.findByIdAndUpdate(
       req.params.id,
       req.body,
       { new: true, runValidators: true }
     )
       .populate('createdBy', 'name email');
 
-    if (!lead) {
-      return res.status(404).json({ message: 'Lead not found' });
-    }
-
-    res.json(lead);
+    res.json(updatedLead);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

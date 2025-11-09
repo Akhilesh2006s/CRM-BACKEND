@@ -181,6 +181,26 @@ const dcSchema = new mongoose.Schema({
   dcNotes: {
     type: String,
   },
+  // Transport and delivery fields
+  transport: {
+    type: String,
+  },
+  lrNo: {
+    type: String,
+  },
+  lrDate: {
+    type: Date,
+  },
+  boxes: {
+    type: String,
+  },
+  transportArea: {
+    type: String,
+  },
+  deliveryStatus: {
+    type: String,
+    enum: ['Pending', 'In Transit', 'Delivered', 'Completed'],
+  },
   financeRemarks: {
     type: String,
   },
@@ -215,6 +235,18 @@ const dcSchema = new mongoose.Schema({
     strength: {
       type: Number,
       default: 0,
+    },
+    price: {
+      type: Number,
+      default: 0,
+    },
+    total: {
+      type: Number,
+      default: 0,
+    },
+    level: {
+      type: String,
+      default: 'L2',
     },
   }],
   // Location tracking for mobile app

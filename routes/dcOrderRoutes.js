@@ -5,6 +5,7 @@ const ctrl = require('../controllers/dcOrderController');
 
 router.get('/', authMiddleware, ctrl.list);
 router.get('/:id', authMiddleware, ctrl.getOne);
+router.get('/:id/history', authMiddleware, ctrl.getHistory);
 router.post('/create', authMiddleware, ctrl.create);
 router.put('/:id', authMiddleware, ctrl.update);
 router.put('/:id/submit', authMiddleware, ctrl.submit);

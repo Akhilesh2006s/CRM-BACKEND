@@ -131,6 +131,11 @@ const raiseDC = async (req, res) => {
         dc.poPhotoUrl = dcOrder.pod_proof_url;
         dc.poDocument = dcOrder.pod_proof_url;
       }
+      // Also update if PO photo is provided directly in request (from lead conversion)
+      if (req.body.poPhotoUrl) {
+        dc.poPhotoUrl = req.body.poPhotoUrl;
+        dc.poDocument = req.body.poPhotoUrl;
+      }
     }
     
     if (!dc) {
@@ -182,6 +187,12 @@ const raiseDC = async (req, res) => {
         dc.poPhotoUrl = dcOrder.pod_proof_url;
         dc.poDocument = dcOrder.pod_proof_url; // Legacy field
       }
+      
+      // Also check if PO photo is provided directly in request (from lead conversion)
+      if (req.body.poPhotoUrl) {
+        dc.poPhotoUrl = req.body.poPhotoUrl;
+        dc.poDocument = req.body.poPhotoUrl;
+      }
     }
 
     // Update DC with provided details
@@ -191,6 +202,12 @@ const raiseDC = async (req, res) => {
       dc.deliveryNotes = dc.deliveryNotes ? `${dc.deliveryNotes}\n${dcNotes}` : dcNotes;
     }
     if (requestedQuantity) dc.requestedQuantity = requestedQuantity;
+    
+    // If PO photo is provided and DC is new, set it
+    if (req.body.poPhotoUrl && !dc.poPhotoUrl) {
+      dc.poPhotoUrl = req.body.poPhotoUrl;
+      dc.poDocument = req.body.poPhotoUrl;
+    }
 
     await dc.save();
 
@@ -764,9 +781,9 @@ const warehouseProcess = async (req, res) => {
       return res.status(404).json({ message: 'DC not found' });
     }
 
-    // Check if DC is in correct status
-    if (dc.status !== 'pending_dc') {
-      return res.status(400).json({ message: `DC must be in 'pending_dc' status. Current status: ${dc.status}` });
+    // Check if DC is in correct status (allow both pending_dc and warehouse_processing)
+    if (dc.status !== 'pending_dc' && dc.status !== 'warehouse_processing') {
+      return res.status(400).json({ message: `DC must be in 'pending_dc' or 'warehouse_processing' status. Current status: ${dc.status}` });
     }
 
     // Update quantities
@@ -778,11 +795,13 @@ const warehouseProcess = async (req, res) => {
       dc.deliverableQuantity = deliverableQuantity;
     }
 
-    // Move to warehouse_processing status
-    dc.status = 'warehouse_processing';
+    // Move to completed status
+    dc.status = 'completed';
     dc.warehouseId = req.user._id;
     dc.warehouseProcessedAt = new Date();
     dc.warehouseProcessedBy = req.user._id;
+    dc.completedAt = new Date();
+    dc.completedBy = req.user._id;
     
     // If available quantity > deliverable quantity, mark as listed
     if (dc.availableQuantity !== undefined && dc.deliverableQuantity !== undefined && 
@@ -911,7 +930,33 @@ const updateDC = async (req, res) => {
     if (req.body.financeRemarks !== undefined) dc.financeRemarks = req.body.financeRemarks;
     if (req.body.splApproval !== undefined) dc.splApproval = req.body.splApproval;
     if (req.body.smeRemarks !== undefined) dc.smeRemarks = req.body.smeRemarks;
-    if (req.body.productDetails !== undefined) dc.productDetails = req.body.productDetails;
+    if (req.body.productDetails !== undefined) {
+      // Ensure productDetails is properly formatted with all fields
+      if (Array.isArray(req.body.productDetails)) {
+        dc.productDetails = req.body.productDetails.map((p) => ({
+          product: p.product || '',
+          class: p.class || '1',
+          category: p.category || 'New Students',
+          productName: p.productName || '',
+          quantity: Number(p.quantity) || Number(p.strength) || 0,
+          strength: Number(p.strength) || 0,
+          price: Number(p.price) || 0,
+          total: Number(p.total) || (Number(p.price) || 0) * (Number(p.strength) || 0),
+          level: p.level || 'L2',
+        }));
+        // Also update requestedQuantity if productDetails are provided
+        if (dc.productDetails.length > 0) {
+          const totalQuantity = dc.productDetails.reduce((sum, p) => {
+            return sum + (p.quantity || p.strength || 0);
+          }, 0);
+          if (totalQuantity > 0) {
+            dc.requestedQuantity = totalQuantity;
+          }
+        }
+      } else {
+        dc.productDetails = req.body.productDetails;
+      }
+    }
     if (req.body.requestedQuantity !== undefined) dc.requestedQuantity = req.body.requestedQuantity;
     if (req.body.status !== undefined) dc.status = req.body.status;
     if (req.body.listedAt !== undefined) {
@@ -931,6 +976,22 @@ const updateDC = async (req, res) => {
     if (req.body.status === 'completed' && !dc.completedAt) {
       dc.completedAt = new Date();
     }
+    // Update PO photo if provided (for editing submitted PO)
+    if (req.body.poPhotoUrl !== undefined) {
+      dc.poPhotoUrl = req.body.poPhotoUrl;
+    }
+    if (req.body.poDocument !== undefined) {
+      dc.poDocument = req.body.poDocument;
+    }
+    if (req.body.deliveryNotes !== undefined) dc.deliveryNotes = req.body.deliveryNotes;
+    if (req.body.transport !== undefined) dc.transport = req.body.transport;
+    if (req.body.lrNo !== undefined) dc.lrNo = req.body.lrNo;
+    if (req.body.lrDate !== undefined) {
+      dc.lrDate = req.body.lrDate ? new Date(req.body.lrDate) : undefined;
+    }
+    if (req.body.boxes !== undefined) dc.boxes = req.body.boxes;
+    if (req.body.transportArea !== undefined) dc.transportArea = req.body.transportArea;
+    if (req.body.deliveryStatus !== undefined) dc.deliveryStatus = req.body.deliveryStatus;
     
     // Save without validating required fields that might not be present during update
     await dc.save({ validateBeforeSave: false });

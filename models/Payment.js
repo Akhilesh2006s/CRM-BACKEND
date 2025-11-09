@@ -77,6 +77,34 @@ const paymentSchema = new mongoose.Schema({
   txnNo: {
     type: String,
   },
+  // Payment mode specific fields
+  upiId: {
+    type: String,
+  },
+  transactionId: {
+    type: String,
+  },
+  chequeNumber: {
+    type: String,
+  },
+  bankName: {
+    type: String,
+  },
+  accountNumber: {
+    type: String,
+  },
+  ifscCode: {
+    type: String,
+  },
+  cardLast4: {
+    type: String,
+  },
+  paymentGateway: {
+    type: String,
+  },
+  otherDetails: {
+    type: String,
+  },
   approvedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

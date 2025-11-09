@@ -15,6 +15,7 @@ const getPayments = async (req, res) => {
       schoolName,
       mobileNo,
       employee,
+      createdBy,
       zone,
       paymentMethod,
     } = req.query;
@@ -26,6 +27,10 @@ const getPayments = async (req, res) => {
     if (schoolName) filter.customerName = { $regex: schoolName, $options: 'i' };
     if (mobileNo) filter.mobileNumber = { $regex: mobileNo, $options: 'i' };
     if (zone) filter.zone = { $regex: zone, $options: 'i' };
+    if (createdBy) {
+      // Filter by createdBy (ObjectId)
+      filter.createdBy = createdBy;
+    }
     if (employee) {
       // Assuming employee is name or email - need to lookup user first
       filter.createdBy = employee; // This would need proper user lookup in production

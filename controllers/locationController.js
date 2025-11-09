@@ -35,12 +35,23 @@ const getTownFromPincode = async (req, res) => {
       });
       
       if (data && data[0] && data[0].Status === 'Success' && data[0].PostOffice && data[0].PostOffice.length > 0) {
-        const postOffice = data[0].PostOffice[0];
+        const postOffices = data[0].PostOffice;
+        const firstPostOffice = postOffices[0];
         return res.json({
           pincode,
-          town: postOffice.Name,
-          district: postOffice.District,
-          state: postOffice.State,
+          town: firstPostOffice.Name,
+          district: firstPostOffice.District,
+          state: firstPostOffice.State,
+          region: firstPostOffice.Division || firstPostOffice.Region || firstPostOffice.District,
+          postOffices: postOffices.map(po => ({
+            Name: po.Name,
+            District: po.District,
+            State: po.State,
+            Division: po.Division,
+            Region: po.Region,
+            Block: po.Block,
+            BranchType: po.BranchType,
+          })),
           success: true,
         });
       } else {
