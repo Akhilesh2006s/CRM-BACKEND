@@ -138,7 +138,7 @@ const seedClosedSales = async () => {
         cluster: 'Cluster C',
         products: [
           {
-            product_name: 'EELL',
+            product_name: 'EEL',
             quantity: 60,
             unit_price: 1100,
           },

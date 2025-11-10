@@ -5,7 +5,7 @@ const serviceSchema = new mongoose.Schema({
   schoolName: { type: String, required: true },
   zone: { type: String },
   town: { type: String },
-  subject: { type: String, enum: ['Abacus', 'Vedic Maths', 'EELL'], required: true },
+  subject: { type: String, enum: ['Abacus', 'Vedic Maths', 'EEL', 'IIT', 'Financial literacy', 'Brain bytes', 'Spelling bee', 'Skill pro', 'Maths lab', 'Codechamp'], required: true },
   trainerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Assigned executive
   serviceDate: { type: Date, required: true },

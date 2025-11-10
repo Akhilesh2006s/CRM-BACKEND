@@ -108,7 +108,7 @@ const getDC = async (req, res) => {
 // @access  Private
 const raiseDC = async (req, res) => {
   try {
-    const { dcOrderId, dcDate, dcRemarks, dcCategory, dcNotes, requestedQuantity } = req.body;
+    const { dcOrderId, dcDate, dcRemarks, dcCategory, dcNotes, requestedQuantity, productDetails } = req.body;
 
     if (!dcOrderId) {
       return res.status(400).json({ message: 'DC Order ID is required' });
@@ -175,6 +175,7 @@ const raiseDC = async (req, res) => {
         deliverableQuantity: 0,
         status: 'created',
         createdBy: req.user._id,
+        productDetails: productDetails || undefined, // Save productDetails if provided (from lead conversion)
       });
 
       // Update the DcOrder with the assigned employee if it wasn't set before
@@ -202,6 +203,10 @@ const raiseDC = async (req, res) => {
       dc.deliveryNotes = dc.deliveryNotes ? `${dc.deliveryNotes}\n${dcNotes}` : dcNotes;
     }
     if (requestedQuantity) dc.requestedQuantity = requestedQuantity;
+    // Update productDetails if provided (for lead conversion or updates)
+    if (productDetails && Array.isArray(productDetails)) {
+      dc.productDetails = productDetails;
+    }
     
     // If PO photo is provided and DC is new, set it
     if (req.body.poPhotoUrl && !dc.poPhotoUrl) {
