@@ -913,7 +913,7 @@ const getMyDCs = async (req, res) => {
 
     const query = DC.find(filter)
       .populate('saleId', 'customerName product quantity status poDocument')
-      .populate('dcOrderId', 'school_name contact_person contact_mobile email address location zone products dc_code')
+      .populate('dcOrderId', 'school_name contact_person contact_mobile email address location zone products dc_code status school_type')
       .populate('employeeId', 'name email')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit));
@@ -955,7 +955,16 @@ const getMyDCs = async (req, res) => {
       // Convert DcOrder to DC-like format
       return {
         _id: order._id, // Use DcOrder ID temporarily
-        dcOrderId: order._id,
+        dcOrderId: {
+          _id: order._id,
+          school_name: order.school_name,
+          contact_person: order.contact_person,
+          contact_mobile: order.contact_mobile,
+          email: order.email,
+          products: order.products,
+          status: order.status,
+          school_type: order.school_type, // Include school_type for category determination
+        },
         employeeId: order.assigned_to ? (typeof order.assigned_to === 'object' ? order.assigned_to._id : order.assigned_to) : employeeId,
         customerName: order.school_name,
         customerEmail: order.email,
@@ -969,17 +978,15 @@ const getMyDCs = async (req, res) => {
         productDetails: order.products ? order.products.map(p => ({
           product: p.product_name || 'Abacus',
           class: '1',
-          category: 'New Students',
-          productName: p.product_name || 'Abacus',
+          category: order.school_type === 'Existing' ? 'Existing School' : 'New School', // Auto-determine category
           quantity: p.quantity || 1,
           strength: 0,
           price: p.unit_price || 0,
           total: (p.quantity || 1) * (p.unit_price || 0),
-          level: 'L2',
+          level: 'L1',
         })) : [],
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
-        dcOrderId: order, // Populated DcOrder
         // Add a flag to indicate this is a converted DcOrder (for frontend to handle appropriately)
         _isConvertedLead: true,
       };

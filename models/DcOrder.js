@@ -29,7 +29,7 @@ const dcOrderSchema = new mongoose.Schema(
     lead_status: { type: String, enum: ['Hot', 'Warm', 'Cold'], default: 'Cold', index: true },
     status: {
       type: String,
-      enum: ['saved', 'pending', 'in_transit', 'completed', 'hold'],
+      enum: ['saved', 'pending', 'in_transit', 'completed', 'hold', 'dc_requested', 'dc_approved', 'dc_sent_to_senior'],
       default: 'pending',
       index: true,
     },
@@ -61,6 +61,19 @@ const dcOrderSchema = new mongoose.Schema(
       updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       updatedAt: { type: Date, default: Date.now },
     }],
+    // DC request data (stored when employee requests DC)
+    dcRequestData: {
+      type: {
+        dcDate: { type: Date },
+        dcRemarks: { type: String },
+        dcNotes: { type: String },
+        dcCategory: { type: String },
+        requestedQuantity: { type: Number },
+        productDetails: { type: Array },
+        employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      },
+      default: null,
+    },
   },
   { timestamps: true }
 );
