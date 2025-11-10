@@ -29,7 +29,7 @@ const dcOrderSchema = new mongoose.Schema(
     lead_status: { type: String, enum: ['Hot', 'Warm', 'Cold'], default: 'Cold', index: true },
     status: {
       type: String,
-      enum: ['saved', 'pending', 'in_transit', 'completed', 'hold', 'dc_requested', 'dc_approved', 'dc_sent_to_senior'],
+      enum: ['saved', 'pending', 'in_transit', 'completed', 'hold', 'dc_requested', 'dc_accepted', 'dc_approved', 'dc_sent_to_senior'],
       default: 'pending',
       index: true,
     },
