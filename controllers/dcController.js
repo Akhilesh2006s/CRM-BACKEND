@@ -934,6 +934,8 @@ const getMyDCs = async (req, res) => {
       .lean();
 
     // Convert DcOrders to DC-like format for frontend compatibility
+    // IMPORTANT: Include saved DcOrders even if they have a DC, but only if the DC doesn't have status 'created' or 'po_submitted'
+    // This ensures closed leads always appear in "My Clients" for the employee to manage
     const dcOrderAsDCs = savedDcOrders.map(order => {
       // Check if a DC already exists for this DcOrder
       const existingDC = dcs.find(dc => 
@@ -941,10 +943,14 @@ const getMyDCs = async (req, res) => {
         (typeof dc.dcOrderId === 'object' ? dc.dcOrderId._id.toString() : dc.dcOrderId.toString()) === order._id.toString()
       );
       
-      // If DC exists, skip this DcOrder (it's already in the dcs array)
-      if (existingDC) {
+      // If DC exists with status 'created' or 'po_submitted', skip this DcOrder (it's already in the dcs array and will be shown)
+      if (existingDC && (existingDC.status === 'created' || existingDC.status === 'po_submitted')) {
         return null;
       }
+      
+      // If DC exists but with a different status (e.g., 'sent_to_manager', 'completed'), still show the DcOrder as 'created' in "My Clients"
+      // This ensures closed leads always appear for the employee to manage, even if the DC has moved to a different workflow stage
+      // The employee can still manage the client from "My Clients" page
 
       // Convert DcOrder to DC-like format
       return {
@@ -957,7 +963,7 @@ const getMyDCs = async (req, res) => {
         customerPhone: order.contact_mobile || order.contact_person || 'N/A',
         product: order.products && order.products.length > 0 ? (order.products[0].product_name || 'Abacus') : 'Abacus',
         requestedQuantity: order.products ? order.products.reduce((sum, p) => sum + (p.quantity || 1), 0) : 1,
-        status: 'created', // Convert saved DcOrder to 'created' status DC for display
+        status: 'created', // Convert saved DcOrder to 'created' status DC for display in "My Clients"
         poPhotoUrl: order.pod_proof_url || null,
         poDocument: order.pod_proof_url || null,
         productDetails: order.products ? order.products.map(p => ({
@@ -974,8 +980,10 @@ const getMyDCs = async (req, res) => {
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         dcOrderId: order, // Populated DcOrder
+        // Add a flag to indicate this is a converted DcOrder (for frontend to handle appropriately)
+        _isConvertedLead: true,
       };
-    }).filter(dc => dc !== null); // Remove null entries (DCs that already exist)
+    }).filter(dc => dc !== null); // Remove null entries (DCs that already exist with correct status)
 
     // Combine DCs and converted DcOrders, remove duplicates
     const allDCs = [...dcs, ...dcOrderAsDCs];
