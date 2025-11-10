@@ -126,7 +126,11 @@ const raiseDC = async (req, res) => {
     let dc = await DC.findOne({ dcOrderId });
     
     if (dc) {
-      // If DC exists, preserve the PO photo if it has one, or get from DcOrder
+      // If DC exists, update employeeId if provided (for lead conversion - employee converting lead should own the client)
+      if (req.body.employeeId || req.body.assignedTo) {
+        dc.employeeId = req.body.employeeId || req.body.assignedTo;
+      }
+      // Preserve the PO photo if it has one, or get from DcOrder
       if (!dc.poPhotoUrl && dcOrder.pod_proof_url) {
         dc.poPhotoUrl = dcOrder.pod_proof_url;
         dc.poDocument = dcOrder.pod_proof_url;
@@ -135,6 +139,10 @@ const raiseDC = async (req, res) => {
       if (req.body.poPhotoUrl) {
         dc.poPhotoUrl = req.body.poPhotoUrl;
         dc.poDocument = req.body.poPhotoUrl;
+      }
+      // Update productDetails if provided (for lead conversion)
+      if (req.body.productDetails && Array.isArray(req.body.productDetails)) {
+        dc.productDetails = req.body.productDetails;
       }
     }
     
@@ -149,12 +157,16 @@ const raiseDC = async (req, res) => {
       }
 
       // If assigned_to is not set, try to get it from the request body (for assigning during Raise DC)
+      // Priority: 1) req.body.employeeId (explicitly provided), 2) dcOrder.assigned_to, 3) req.user._id (current user)
       let employeeId = null;
-      if (dcOrder.assigned_to) {
-        employeeId = typeof dcOrder.assigned_to === 'object' ? dcOrder.assigned_to._id : dcOrder.assigned_to;
-      } else if (req.body.employeeId || req.body.assignedTo) {
-        // Allow assigning employee during Raise DC if not already assigned
+      if (req.body.employeeId || req.body.assignedTo) {
+        // Explicitly provided employeeId takes priority (for lead conversion)
         employeeId = req.body.employeeId || req.body.assignedTo;
+      } else if (dcOrder.assigned_to) {
+        employeeId = typeof dcOrder.assigned_to === 'object' ? dcOrder.assigned_to._id : dcOrder.assigned_to;
+      } else {
+        // Fallback to current user (the person creating the DC)
+        employeeId = req.user._id;
       }
 
       if (!employeeId) {
