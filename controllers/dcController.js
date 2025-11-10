@@ -907,10 +907,10 @@ const getMyDCs = async (req, res) => {
     const employeeId = req.user._id;
     const { status, limit = 50 } = req.query;
 
+    // Get DCs assigned to this employee
     const filter = { employeeId };
     if (status) filter.status = status;
 
-    // Optimize query - limit results and use lean() for better performance
     const query = DC.find(filter)
       .populate('saleId', 'customerName product quantity status poDocument')
       .populate('dcOrderId', 'school_name contact_person contact_mobile email address location zone products dc_code')
@@ -920,7 +920,85 @@ const getMyDCs = async (req, res) => {
 
     const dcs = await query.lean();
 
-    res.json(dcs);
+    // Also get DcOrders with 'saved' status assigned to this employee that don't have a DC yet
+    // These are converted leads that should appear in "My Clients"
+    const DcOrder = require('../models/DcOrder');
+    const savedDcOrders = await DcOrder.find({
+      assigned_to: employeeId,
+      status: 'saved'
+    })
+      .populate('assigned_to', 'name email')
+      .populate('created_by', 'name email')
+      .sort({ updatedAt: -1 })
+      .limit(parseInt(limit))
+      .lean();
+
+    // Convert DcOrders to DC-like format for frontend compatibility
+    const dcOrderAsDCs = savedDcOrders.map(order => {
+      // Check if a DC already exists for this DcOrder
+      const existingDC = dcs.find(dc => 
+        dc.dcOrderId && 
+        (typeof dc.dcOrderId === 'object' ? dc.dcOrderId._id.toString() : dc.dcOrderId.toString()) === order._id.toString()
+      );
+      
+      // If DC exists, skip this DcOrder (it's already in the dcs array)
+      if (existingDC) {
+        return null;
+      }
+
+      // Convert DcOrder to DC-like format
+      return {
+        _id: order._id, // Use DcOrder ID temporarily
+        dcOrderId: order._id,
+        employeeId: order.assigned_to ? (typeof order.assigned_to === 'object' ? order.assigned_to._id : order.assigned_to) : employeeId,
+        customerName: order.school_name,
+        customerEmail: order.email,
+        customerAddress: order.address || order.location || 'N/A',
+        customerPhone: order.contact_mobile || order.contact_person || 'N/A',
+        product: order.products && order.products.length > 0 ? (order.products[0].product_name || 'Abacus') : 'Abacus',
+        requestedQuantity: order.products ? order.products.reduce((sum, p) => sum + (p.quantity || 1), 0) : 1,
+        status: 'created', // Convert saved DcOrder to 'created' status DC for display
+        poPhotoUrl: order.pod_proof_url || null,
+        poDocument: order.pod_proof_url || null,
+        productDetails: order.products ? order.products.map(p => ({
+          product: p.product_name || 'Abacus',
+          class: '1',
+          category: 'New Students',
+          productName: p.product_name || 'Abacus',
+          quantity: p.quantity || 1,
+          strength: 0,
+          price: p.unit_price || 0,
+          total: (p.quantity || 1) * (p.unit_price || 0),
+          level: 'L2',
+        })) : [],
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        dcOrderId: order, // Populated DcOrder
+      };
+    }).filter(dc => dc !== null); // Remove null entries (DCs that already exist)
+
+    // Combine DCs and converted DcOrders, remove duplicates
+    const allDCs = [...dcs, ...dcOrderAsDCs];
+    
+    // Remove duplicates based on dcOrderId
+    const uniqueDCs = [];
+    const seenDcOrderIds = new Set();
+    
+    allDCs.forEach(dc => {
+      const dcOrderId = dc.dcOrderId 
+        ? (typeof dc.dcOrderId === 'object' ? dc.dcOrderId._id.toString() : dc.dcOrderId.toString())
+        : null;
+      
+      if (dcOrderId && !seenDcOrderIds.has(dcOrderId)) {
+        seenDcOrderIds.add(dcOrderId);
+        uniqueDCs.push(dc);
+      } else if (!dcOrderId) {
+        // DCs without dcOrderId (from Sale) - include them
+        uniqueDCs.push(dc);
+      }
+    });
+
+    res.json(uniqueDCs);
   } catch (error) {
     console.error('Error in getMyDCs:', error);
     res.status(500).json({ message: error.message });
