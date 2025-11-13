@@ -78,7 +78,7 @@ const createExpense = async (req, res) => {
     };
 
     // If user is an employee, automatically set employeeId to their ID
-    if (req.user.role === 'Employee' && !req.body.employeeId) {
+    if (req.user.role === 'Executive' && !req.body.employeeId) {
       expenseData.employeeId = req.user._id;
     }
 

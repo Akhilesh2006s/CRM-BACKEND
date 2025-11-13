@@ -1,7 +1,48 @@
 const DC = require('../models/DC');
 const Sale = require('../models/Sale');
 const Warehouse = require('../models/Warehouse');
+const StockMovement = require('../models/StockMovement');
 const ExcelJS = require('exceljs');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = path.join(__dirname, '../uploads/po');
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    // Generate unique filename with timestamp
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, 'po-' + uniqueSuffix + ext);
+  }
+});
+
+// File filter to accept images and PDFs
+const fileFilter = (req, file, cb) => {
+  // Accept images and PDFs
+  if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files (JPG, PNG) and PDF files are allowed'), false);
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: fileFilter
+});
+
 
 // @desc    Get all DCs with filtering
 // @route   GET /api/dc
@@ -28,16 +69,42 @@ const getDCs = async (req, res) => {
       ];
     }
 
-    const dcs = await DC.find(filter)
-      .populate('saleId', 'customerName product quantity status poDocument')
-      .populate('dcOrderId', 'school_name school_type contact_person contact_mobile email address location zone products dc_code')
-      .populate('employeeId', 'name email')
-      .populate('createdBy', 'name email')
-      .populate('submittedBy', 'name email')
-      .populate('warehouseProcessedBy', 'name email')
-      .populate('deliverySubmittedBy', 'name email')
-      .populate('completedBy', 'name email')
-      .sort({ createdAt: -1 });
+    // Optimize query - fetch without populate first, then populate if needed
+    let dcs = await DC.find(filter)
+      .select('_id saleId dcOrderId employeeId customerName customerPhone customerEmail customerAddress product requestedQuantity availableQuantity deliverableQuantity status poPhotoUrl poDocument productDetails dcDate dcRemarks dcCategory dcNotes transport lrNo lrDate boxes transportArea deliveryStatus financeRemarks splApproval smeRemarks warehouseProcessedAt warehouseProcessedBy completedAt completedBy createdAt updatedAt')
+      .sort({ createdAt: -1 })
+      .lean()
+      .maxTimeMS(20000); // 20 second timeout
+
+    // Populate in a separate step if we got results (but don't fail if it times out)
+    if (dcs && dcs.length > 0) {
+      try {
+        const populatedPromise = DC.find({ _id: { $in: dcs.map(dc => dc._id) } })
+          .populate('saleId', 'customerName product quantity status poDocument')
+          .populate('dcOrderId', 'school_name school_type contact_person contact_mobile email address location zone products dc_code')
+          .populate('employeeId', 'name email')
+          .populate('createdBy', 'name email')
+          .populate('submittedBy', 'name email')
+          .populate('warehouseProcessedBy', 'name email')
+          .populate('deliverySubmittedBy', 'name email')
+          .populate('completedBy', 'name email')
+          .sort({ createdAt: -1 })
+          .maxTimeMS(15000)
+          .lean();
+        
+        const populatedTimeout = new Promise((resolve) => 
+          setTimeout(() => resolve(dcs), 15000)
+        );
+        
+        const populated = await Promise.race([populatedPromise, populatedTimeout]);
+        if (populated && populated.length > 0 && Array.isArray(populated)) {
+          dcs = populated;
+        }
+      } catch (popErr) {
+        console.warn('Population failed, using unpopulated data:', popErr.message);
+        // Keep unpopulated dcs
+      }
+    }
 
     // Apply additional filters that need to check populated fields
     let filteredDCs = dcs;
@@ -108,9 +175,18 @@ const getDC = async (req, res) => {
 // @access  Private
 const raiseDC = async (req, res) => {
   try {
+    console.log('📦 RAISE DC request received:', {
+      dcOrderId: req.body.dcOrderId,
+      employeeId: req.body.employeeId,
+      status: req.body.status,
+      hasProductDetails: !!req.body.productDetails,
+      productDetailsCount: req.body.productDetails?.length || 0
+    });
+    
     const { dcOrderId, dcDate, dcRemarks, dcCategory, dcNotes, requestedQuantity, productDetails } = req.body;
 
     if (!dcOrderId) {
+      console.log('❌ DC Order ID is missing');
       return res.status(400).json({ message: 'DC Order ID is required' });
     }
 
@@ -119,8 +195,15 @@ const raiseDC = async (req, res) => {
       .populate('assigned_to', 'name email');
 
     if (!dcOrder) {
+      console.log('❌ DcOrder not found:', dcOrderId);
       return res.status(404).json({ message: 'Deal/Lead not found' });
     }
+    
+    console.log('✅ DcOrder found:', {
+      schoolName: dcOrder.school_name,
+      currentStatus: dcOrder.status,
+      assignedTo: dcOrder.assigned_to
+    });
 
     // Check if DC already exists for this DcOrder
     let dc = await DC.findOne({ dcOrderId });
@@ -175,6 +258,13 @@ const raiseDC = async (req, res) => {
         });
       }
 
+      console.log('🆕 Creating new DC:', {
+        dcOrderId: dcOrder._id,
+        employeeId: employeeId,
+        status: req.body.status || 'created',
+        customerName: dcOrder.school_name
+      });
+      
       dc = await DC.create({
         dcOrderId: dcOrder._id,
         employeeId: employeeId,
@@ -185,9 +275,16 @@ const raiseDC = async (req, res) => {
         product: productName,
         requestedQuantity: requestedQuantity || quantity,
         deliverableQuantity: 0,
-        status: 'created',
+        status: req.body.status || 'created', // Use status from request body (should be 'created' now)
         createdBy: req.user._id,
         productDetails: productDetails || undefined, // Save productDetails if provided (from lead conversion)
+      });
+      
+      console.log('✅ DC created successfully:', {
+        dcId: dc._id,
+        status: dc.status,
+        employeeId: dc.employeeId,
+        customerName: dc.customerName
       });
 
       // Update the DcOrder with the assigned employee if it wasn't set before
@@ -526,19 +623,61 @@ const getEmployeeDCs = async (req, res) => {
   }
 };
 
-// @desc    Get completed DCs (for Manager)
+// @desc    Get completed DCs (for Manager/Warehouse)
 // @route   GET /api/dc/completed
 // @access  Private
 const getCompletedDCs = async (req, res) => {
   try {
-    const dcs = await DC.find({ status: 'Completed' })
-      .populate('saleId', 'customerName product quantity status')
-      .populate('employeeId', 'name email')
-      .populate('completedBy', 'name email')
-      .sort({ completedAt: -1 });
+    // Use lowercase 'completed' to match the DC model enum
+    // Optimize query - fetch without populate first
+    let dcs = await DC.find({ status: 'completed' })
+      .select('_id saleId dcOrderId employeeId customerName customerPhone customerEmail customerAddress product requestedQuantity availableQuantity deliverableQuantity status poPhotoUrl poDocument productDetails dcDate dcRemarks dcCategory dcNotes transport lrNo lrDate boxes transportArea deliveryStatus financeRemarks splApproval smeRemarks warehouseProcessedAt warehouseProcessedBy completedAt completedBy createdAt updatedAt')
+      .sort({ completedAt: -1, createdAt: -1 }) // Sort by completedAt first, then createdAt as fallback
+      .lean()
+      .maxTimeMS(20000);
 
+    // Populate if we got results
+    if (dcs && dcs.length > 0) {
+      try {
+        const populatedPromise = DC.find({ _id: { $in: dcs.map(dc => dc._id) }, status: 'completed' })
+          .populate('saleId', 'customerName product quantity status')
+          .populate('dcOrderId', 'school_name school_type contact_person contact_mobile email address location zone products dc_code')
+          .populate('employeeId', 'name email')
+          .populate('completedBy', 'name email')
+          .populate('warehouseProcessedBy', 'name email')
+          .sort({ completedAt: -1, createdAt: -1 }) // Sort by completedAt first, then createdAt as fallback
+          .maxTimeMS(15000)
+          .lean();
+        
+        const populatedTimeout = new Promise((resolve) => 
+          setTimeout(() => resolve(dcs), 15000)
+        );
+        
+        const populated = await Promise.race([populatedPromise, populatedTimeout]);
+        if (populated && populated.length > 0 && Array.isArray(populated)) {
+          dcs = populated;
+        }
+      } catch (popErr) {
+        console.warn('Population failed for completed DCs, using unpopulated data:', popErr.message);
+      }
+    }
+
+    console.log(`Found ${dcs.length} completed DCs`);
+    
+    // Ensure we return an array even if query fails
+    if (!Array.isArray(dcs)) {
+      console.warn('getCompletedDCs: dcs is not an array, returning empty array');
+      dcs = [];
+    }
+    
     res.json(dcs);
   } catch (error) {
+    console.error('Error in getCompletedDCs:', error);
+    // Return empty array on error to prevent frontend from breaking
+    if (error.message && error.message.includes('timed out')) {
+      console.warn('Query timed out, returning empty array');
+      return res.json([]);
+    }
     res.status(500).json({ message: error.message });
   }
 };
@@ -831,6 +970,81 @@ const warehouseProcess = async (req, res) => {
     }
     await dc.save();
 
+    // Automatically deduct stock from inventory for each product in productDetails
+    if (dc.productDetails && Array.isArray(dc.productDetails) && dc.productDetails.length > 0) {
+      for (const productDetail of dc.productDetails) {
+        try {
+          const deliverableQty = productDetail.deliverableQuantity || productDetail.quantity || 0;
+          if (deliverableQty <= 0) continue; // Skip if no quantity to deduct
+          
+          // Find matching warehouse item by productName, category, and level
+          const productName = productDetail.productName || productDetail.product || '';
+          const category = productDetail.category || '';
+          const level = productDetail.level || '';
+          
+          // Try to find exact match first
+          let warehouseItem = await Warehouse.findOne({
+            productName: { $regex: new RegExp(`^${productName}$`, 'i') },
+            category: category,
+            level: level
+          });
+          
+          // If no exact match, try productName and category only
+          if (!warehouseItem) {
+            warehouseItem = await Warehouse.findOne({
+              productName: { $regex: new RegExp(`^${productName}$`, 'i') },
+              category: category
+            });
+          }
+          
+          // If still no match, try productName only
+          if (!warehouseItem) {
+            warehouseItem = await Warehouse.findOne({
+              productName: { $regex: new RegExp(`^${productName}$`, 'i') }
+            });
+          }
+          
+          if (warehouseItem) {
+            // Get availableQty from productDetails or warehouse item
+            const availableQty = productDetail.availableQuantity !== undefined && productDetail.availableQuantity !== null
+              ? Number(productDetail.availableQuantity)
+              : warehouseItem.currentStock || 0;
+            
+            // Use remainingQuantity from productDetails if available (from form)
+            // Otherwise calculate it: available - deliverable
+            let remainingQty;
+            if (productDetail.remainingQuantity !== undefined && productDetail.remainingQuantity !== null) {
+              // Use the remaining qty from the form
+              remainingQty = Number(productDetail.remainingQuantity);
+            } else {
+              // Calculate remaining quantity (available - deliverable)
+              remainingQty = availableQty - deliverableQty;
+            }
+            
+            // Update warehouse stock with remaining quantity
+            warehouseItem.currentStock = Math.max(0, remainingQty); // Ensure non-negative
+            await warehouseItem.save();
+            
+            // Record stock movement
+            await StockMovement.create({
+              productId: warehouseItem._id,
+              movementType: 'Out',
+              quantity: deliverableQty,
+              reason: `DC ${dc._id} - ${dc.customerName || 'Customer'}`,
+              createdBy: req.user._id,
+            });
+            
+            console.log(`Updated stock for ${productName}: ${availableQty} -> ${remainingQty} (deducted ${deliverableQty})`);
+          } else {
+            console.warn(`No warehouse item found for product: ${productName}, category: ${category}, level: ${level}`);
+          }
+        } catch (err) {
+          console.error(`Error updating stock for product ${productDetail.productName}:`, err);
+          // Continue with other products even if one fails
+        }
+      }
+    }
+
     const populatedDC = await DC.findById(dc._id)
       .populate('saleId', 'customerName product quantity status poDocument')
       .populate('employeeId', 'name email')
@@ -904,6 +1118,17 @@ const getPendingWarehouseDCs = async (req, res) => {
 // @access  Private
 const getMyDCs = async (req, res) => {
   try {
+    const mongoose = require('mongoose');
+    const connectionState = mongoose.connection.readyState;
+    if (connectionState !== 1) {
+      console.warn(`MongoDB connection state: ${connectionState} (0=disconnected, 1=connected, 2=connecting, 3=disconnecting)`);
+      return res.status(503).json({
+        message: 'Database connection unavailable. Please check your MongoDB connection.',
+        error: 'DATABASE_CONNECTION_ERROR',
+        connectionState: connectionState
+      });
+    }
+
     const employeeId = req.user._id;
     const { status, limit = 50 } = req.query;
 
@@ -911,27 +1136,151 @@ const getMyDCs = async (req, res) => {
     const filter = { employeeId };
     if (status) filter.status = status;
 
-    const query = DC.find(filter)
-      .populate('saleId', 'customerName product quantity status poDocument')
-      .populate('dcOrderId', 'school_name contact_person contact_mobile email address location zone products dc_code status school_type')
-      .populate('employeeId', 'name email')
+    // Use lean() for faster queries and only populate what's needed
+    // Try a simpler query first without populate to see if we can get results faster
+    // Use Promise.race to return data quickly even if query is slow
+    // First try with minimal fields for speed
+    const minimalQueryPromise = DC.find(filter)
+      .select('_id dcOrderId customerName status productDetails createdAt')
       .sort({ createdAt: -1 })
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .maxTimeMS(10000) // 10 seconds for minimal query
+      .lean();
 
-    const dcs = await query.lean();
+    const minimalTimeout = new Promise((resolve) => 
+      setTimeout(() => resolve([]), 10000)
+    );
+
+    // Try minimal query first
+    let dcs = await Promise.race([minimalQueryPromise, minimalTimeout]).catch(() => []);
+
+    // If minimal query worked, try to get full data (but don't wait too long)
+    if (dcs && dcs.length > 0) {
+      try {
+        const fullQueryPromise = DC.find({ _id: { $in: dcs.map(dc => dc._id) } })
+          .select('saleId dcOrderId employeeId customerName customerEmail customerAddress customerPhone product requestedQuantity status poPhotoUrl poDocument productDetails dcDate dcRemarks dcCategory dcNotes createdAt updatedAt')
+          .maxTimeMS(5000) // 5 seconds for full query
+          .lean();
+
+        const fullTimeout = new Promise((resolve) => 
+          setTimeout(() => resolve(dcs), 5000)
+        );
+
+        const fullData = await Promise.race([fullQueryPromise, fullTimeout]);
+        if (fullData && fullData.length > 0) {
+          dcs = fullData;
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not fetch full DC data, using minimal data:', err.message);
+        // Keep minimal dcs
+      }
+    } else {
+      console.warn('⚠️ Minimal query also timed out or returned no results');
+    }
+
+    // If we got results, try to populate them (but don't fail if populate times out)
+    // Use Promise.race to timeout populate quickly if it's slow
+    if (dcs && dcs.length > 0) {
+      try {
+        const populatePromise = DC.find({ _id: { $in: dcs.map(dc => dc._id) } })
+          .populate('saleId', 'customerName product quantity status poDocument')
+          .populate('dcOrderId', 'school_name contact_person contact_mobile email address location zone products dc_code status school_type')
+          .populate('employeeId', 'name email')
+          .maxTimeMS(8000) // Shorter timeout for populate
+          .lean();
+        
+        const timeoutPromise = new Promise((resolve) => 
+          setTimeout(() => resolve(dcs), 8000)
+        );
+        
+        const populated = await Promise.race([populatePromise, timeoutPromise]);
+        if (populated && populated.length > 0 && Array.isArray(populated)) {
+          dcs = populated;
+          console.log(`✅ Populated ${dcs.length} DCs successfully`);
+        } else {
+          console.warn('⚠️ Population timed out or failed, using unpopulated data');
+        }
+      } catch (popErr) {
+        console.warn('⚠️ Population failed, using unpopulated data:', popErr.message);
+        // Keep unpopulated dcs - they'll still work, just without populated fields
+      }
+    }
 
     // Also get DcOrders with 'saved' status assigned to this employee that don't have a DC yet
     // These are converted leads that should appear in "My Clients"
     const DcOrder = require('../models/DcOrder');
-    const savedDcOrders = await DcOrder.find({
+    // Try minimal query first for speed
+    const savedDcOrdersMinimalPromise = DcOrder.find({
       assigned_to: employeeId,
       status: 'saved'
     })
-      .populate('assigned_to', 'name email')
-      .populate('created_by', 'name email')
+      .select('_id school_name status createdAt updatedAt')
       .sort({ updatedAt: -1 })
       .limit(parseInt(limit))
+      .maxTimeMS(10000) // 10 seconds for minimal
       .lean();
+
+    const savedDcOrdersMinimalTimeout = new Promise((resolve) => 
+      setTimeout(() => resolve([]), 10000)
+    );
+
+    let savedDcOrders = await Promise.race([savedDcOrdersMinimalPromise, savedDcOrdersMinimalTimeout]).catch(() => []);
+
+    // If minimal worked, try to get full data
+    if (savedDcOrders && savedDcOrders.length > 0) {
+      try {
+        const savedDcOrdersFullPromise = DcOrder.find({
+          _id: { $in: savedDcOrders.map(o => o._id) },
+          assigned_to: employeeId,
+          status: 'saved'
+        })
+          .select('_id school_name contact_person contact_mobile email address location zone products dc_code status school_type assigned_to created_by createdAt updatedAt pod_proof_url')
+          .maxTimeMS(5000) // 5 seconds for full
+          .lean();
+
+        const savedDcOrdersFullTimeout = new Promise((resolve) => 
+          setTimeout(() => resolve(savedDcOrders), 5000)
+        );
+
+        const fullOrders = await Promise.race([savedDcOrdersFullPromise, savedDcOrdersFullTimeout]);
+        if (fullOrders && fullOrders.length > 0) {
+          savedDcOrders = fullOrders;
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not fetch full DcOrder data, using minimal:', err.message);
+        // Keep minimal savedDcOrders
+      }
+    }
+
+    // Try to populate if we got results (but don't fail if it times out)
+    if (savedDcOrders && savedDcOrders.length > 0) {
+      try {
+        const populatePromise = DcOrder.find({
+          _id: { $in: savedDcOrders.map(o => o._id) },
+          assigned_to: employeeId,
+          status: 'saved'
+        })
+          .populate('assigned_to', 'name email')
+          .populate('created_by', 'name email')
+          .maxTimeMS(8000) // Shorter timeout
+          .lean();
+        
+        const timeoutPromise = new Promise((resolve) => 
+          setTimeout(() => resolve(savedDcOrders), 8000)
+        );
+        
+        const populatedOrders = await Promise.race([populatePromise, timeoutPromise]);
+        if (populatedOrders && populatedOrders.length > 0 && Array.isArray(populatedOrders)) {
+          savedDcOrders = populatedOrders;
+          console.log(`✅ Populated ${savedDcOrders.length} DcOrders successfully`);
+        } else {
+          console.warn('⚠️ DcOrder population timed out, using unpopulated data');
+        }
+      } catch (popErr) {
+        console.warn('⚠️ DcOrder population failed, using unpopulated data:', popErr.message);
+        // Keep unpopulated savedDcOrders - they'll still work
+      }
+    }
 
     // Convert DcOrders to DC-like format for frontend compatibility
     // IMPORTANT: Include saved DcOrders even if they have a DC, but only if the DC doesn't have status 'created' or 'po_submitted'
@@ -1015,8 +1364,21 @@ const getMyDCs = async (req, res) => {
 
     res.json(uniqueDCs);
   } catch (error) {
+    if (error.message && (error.message.includes('timeout') || error.message.includes('connection') || error.message.includes('ECONNREFUSED') || error.message.includes('maxTimeMS'))) {
+      console.error('MongoDB connection/query error in getMyDCs:', error.message);
+      if (error.message.includes('maxTimeMS')) {
+        console.error('Query exceeded 30 second timeout. Consider adding indexes or reducing data scope.');
+      }
+      return res.status(503).json({
+        message: error.message.includes('maxTimeMS')
+          ? 'Query is taking too long. Please try again or contact support if the issue persists.'
+          : 'Database connection failed. Please check your MongoDB connection settings.',
+        error: 'DATABASE_CONNECTION_ERROR',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
     console.error('Error in getMyDCs:', error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message || 'Internal server error', error: 'INTERNAL_ERROR' });
   }
 };
 
@@ -1053,6 +1415,9 @@ const updateDC = async (req, res) => {
           price: Number(p.price) || 0,
           total: Number(p.total) || (Number(p.price) || 0) * (Number(p.strength) || 0),
           level: p.level || 'L2',
+          availableQuantity: p.availableQuantity !== undefined && p.availableQuantity !== null ? Number(p.availableQuantity) : undefined,
+          deliverableQuantity: p.deliverableQuantity !== undefined && p.deliverableQuantity !== null ? Number(p.deliverableQuantity) : undefined,
+          remainingQuantity: p.remainingQuantity !== undefined && p.remainingQuantity !== null ? Number(p.remainingQuantity) : undefined,
         }));
         // Also update requestedQuantity if productDetails are provided
         if (dc.productDetails.length > 0) {
@@ -1240,6 +1605,38 @@ const exportSalesVisit = async (req, res) => {
   }
 };
 
+// @desc    Upload PO document (image or PDF)
+// @route   POST /api/dc/upload-po
+// @access  Private
+const uploadPO = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    // Generate URL for the uploaded file
+    // In production, you might want to use a cloud storage service like AWS S3, Cloudinary, etc.
+    const fileUrl = `/uploads/po/${req.file.filename}`;
+    
+    // For local development, return a full URL
+    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
+    const fullUrl = `${baseUrl}${fileUrl}`;
+
+    res.json({
+      message: 'PO document uploaded successfully',
+      poPhotoUrl: fullUrl,
+      url: fullUrl, // Alias for backward compatibility
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+    });
+  } catch (error) {
+    console.error('Error uploading PO document:', error);
+    res.status(500).json({ message: error.message || 'Failed to upload PO document' });
+  }
+};
+
 module.exports = {
   getDCs,
   getDC,
@@ -1266,4 +1663,6 @@ module.exports = {
   updateDC,
   submitDCToManager,
   exportSalesVisit,
+  uploadPO,
+  uploadPOMiddleware: upload.single('poPhoto'),
 };

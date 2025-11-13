@@ -138,7 +138,7 @@ const getEmployeeTracking = async (req, res) => {
     const { employeeId, fromDate, toDate } = req.query;
     
     // Get all active employees
-    const employeeFilter = { isActive: true, role: { $in: ['Employee', 'Executive', 'Manager'] } };
+    const employeeFilter = { isActive: true, role: { $in: ['Executive', 'Manager'] } };
     if (employeeId) employeeFilter._id = employeeId;
     
     const employees = await User.find(employeeFilter).select('-password');
@@ -223,7 +223,7 @@ const exportEmployeeTracking = async (req, res) => {
   try {
     const { employeeId, fromDate, toDate } = req.query;
     
-    const employeeFilter = { isActive: true, role: { $in: ['Employee', 'Executive', 'Manager'] } };
+    const employeeFilter = { isActive: true, role: { $in: ['Executive', 'Manager'] } };
     if (employeeId) employeeFilter._id = employeeId;
     
     const employees = await User.find(employeeFilter).select('-password');

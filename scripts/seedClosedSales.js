@@ -52,14 +52,14 @@ const seedClosedSales = async () => {
     }
 
     // Find or get an employee for assigned_to
-    let employeeUser = await User.findOne({ role: 'Employee' });
+    let employeeUser = await User.findOne({ role: 'Executive' });
     if (!employeeUser) {
       // Create an employee user if none exists
       employeeUser = await User.create({
         name: 'Test Employee',
         email: 'employee@example.com',
         password: 'password123',
-        role: 'Employee',
+        role: 'Executive',
       });
       console.log('Created default employee user:', employeeUser._id);
     }

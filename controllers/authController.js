@@ -31,7 +31,7 @@ const register = async (req, res) => {
       name,
       email,
       password,
-      role: superAdminEmails.includes(String(email).toLowerCase()) ? 'Super Admin' : (role || 'Employee'),
+      role: superAdminEmails.includes(String(email).toLowerCase()) ? 'Super Admin' : (role || 'Executive'),
       phone,
       department,
     });
@@ -59,7 +59,7 @@ const register = async (req, res) => {
         name,
         email,
         password: await bcrypt.hash(password, 10),
-      role: superAdminEmails.includes(String(email).toLowerCase()) ? 'Super Admin' : (role || 'Employee'),
+      role: superAdminEmails.includes(String(email).toLowerCase()) ? 'Super Admin' : (role || 'Executive'),
         phone,
         department,
       });
@@ -181,7 +181,7 @@ const firebaseLogin = async (req, res) => {
         firebaseUID,
         email,
         name,
-        role: 'Employee',
+        role: 'Executive',
       });
     }
 

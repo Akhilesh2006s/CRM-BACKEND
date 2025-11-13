@@ -19,7 +19,7 @@ class MockDataService {
           _id: '2',
           name: 'John Doe',
           email: 'john@viswamedutech.com',
-          role: 'Employee',
+          role: 'Executive',
           phone: '+91-9876543211',
           department: 'Sales',
           isActive: true,

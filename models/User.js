@@ -25,8 +25,8 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['Super Admin', 'Admin', 'Employee', 'Finance Manager', 'Trainer', 'Coordinator', 'Senior Coordinator', 'Manager', 'Executive', 'Sales BDE'],
-    default: 'Employee',
+    enum: ['Super Admin', 'Admin', 'Finance Manager', 'Trainer', 'Coordinator', 'Senior Coordinator', 'Manager', 'Executive', 'Sales BDE', 'Executive Manager'],
+    default: 'Executive',
   },
   // Support for multiple roles (for mobile app employees who can be both Sales BDE and Trainer)
   roles: [{
@@ -63,6 +63,28 @@ const userSchema = new mongoose.Schema({
   },
   lastLogin: {
     type: Date,
+  },
+  // Executive Manager hierarchy fields
+  executiveManagerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  assignedState: {
+    type: String,
+    default: null,
+  },
+  assignedCity: {
+    type: String,
+    default: null,
+  },
+  assignedArea: {
+    type: String,
+    default: null,
+  },
+  assignedDistrict: {
+    type: String,
+    default: null,
   },
 }, {
   timestamps: true,

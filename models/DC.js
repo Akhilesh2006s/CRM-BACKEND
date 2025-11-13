@@ -267,8 +267,10 @@ const dcSchema = new mongoose.Schema({
 
 // Index for efficient queries by status and employee
 dcSchema.index({ status: 1, employeeId: 1 });
+dcSchema.index({ employeeId: 1 }); // Single index for queries filtering only by employeeId
 dcSchema.index({ saleId: 1 });
 dcSchema.index({ dcOrderId: 1 });
+dcSchema.index({ employeeId: 1, createdAt: -1 }); // Compound index for sorting by createdAt
 // Ensure at least one of saleId or dcOrderId is provided (only on creation)
 dcSchema.pre('validate', function(next) {
   // Only validate on new documents, not on updates

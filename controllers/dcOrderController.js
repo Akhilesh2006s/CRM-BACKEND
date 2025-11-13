@@ -3,6 +3,20 @@ const DC = require('../models/DC');
 
 const list = async (req, res) => {
   try {
+    // Check MongoDB connection status
+    const mongoose = require('mongoose');
+    const connectionState = mongoose.connection.readyState;
+    
+    // 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
+    if (connectionState !== 1) {
+      console.warn(`MongoDB connection state: ${connectionState} (0=disconnected, 1=connected, 2=connecting, 3=disconnecting)`);
+      return res.status(503).json({ 
+        message: 'Database connection unavailable. Please check your MongoDB connection.',
+        error: 'DATABASE_CONNECTION_ERROR',
+        connectionState: connectionState
+      });
+    }
+
     const { status, q, zone, assigned_to, lead_status, from, to } = req.query;
     const filter = {};
     if (status) filter.status = status;
@@ -25,19 +39,97 @@ const list = async (req, res) => {
         { email: new RegExp(q, 'i') },
       ];
     }
-    const items = await DcOrder.find(filter)
-      .populate('created_by', 'name email')
-      .populate('assigned_to', 'name email')
-      .populate('updateHistory.updatedBy', 'name email')
-      .sort({ createdAt: -1 });
-    res.json(items);
+    // Pagination support
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50; // Default 50 items per page
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination - use estimatedDocumentCount for better performance if no filters
+    // Otherwise use countDocuments with timeout
+    let total;
+    try {
+      if (Object.keys(filter).length === 0) {
+        total = await Promise.race([
+          DcOrder.estimatedDocumentCount(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Count timeout')), 10000))
+        ]);
+      } else {
+        total = await Promise.race([
+          DcOrder.countDocuments(filter),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Count timeout')), 10000))
+        ]);
+      }
+    } catch (countError) {
+      // If count times out, use a default or estimate
+      console.warn('Count query timed out, using estimate');
+      total = 0; // Will be updated as data loads
+    }
+
+    // Query with pagination - optimized for performance
+    // Only populate essential fields, skip updateHistory populate for list view
+    const query = DcOrder.find(filter)
+      .select('school_name contact_person contact_mobile zone status follow_up_date location strength createdAt remarks school_type priority lead_status assigned_to created_by') // Only select needed fields
+      .populate('assigned_to', 'name email') // Only populate assigned_to for list view
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean() // Use lean() for better performance
+      .maxTimeMS(30000); // 30 second timeout at MongoDB level
+    
+    const items = await query;
+
+    // Return paginated response
+    res.json({
+      data: items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPrevPage: page > 1
+      }
+    });
   } catch (e) {
-    res.status(500).json({ message: e.message });
+    // Check if it's a MongoDB connection error or query timeout
+    if (e.message && (
+      e.message.includes('timeout') || 
+      e.message.includes('connection') || 
+      e.message.includes('ECONNREFUSED') ||
+      e.message.includes('maxTimeMS')
+    )) {
+      console.error('MongoDB connection/query error in dc-orders list:', e.message);
+      // Don't log the full error stack for timeout errors to reduce noise
+      if (e.message.includes('maxTimeMS')) {
+        console.error('Query exceeded 60 second timeout. Consider adding indexes or reducing data scope.');
+      }
+      return res.status(503).json({ 
+        message: e.message.includes('maxTimeMS') 
+          ? 'Query is taking too long. Please try again or contact support if the issue persists.'
+          : 'Database connection failed. Please check your MongoDB connection settings.',
+        error: 'DATABASE_CONNECTION_ERROR',
+        details: process.env.NODE_ENV === 'development' ? e.message : undefined
+      });
+    }
+    console.error('Error in dc-orders list:', e);
+    res.status(500).json({ 
+      message: e.message || 'Internal server error',
+      error: 'INTERNAL_ERROR'
+    });
   }
 };
 
 const getOne = async (req, res) => {
   try {
+    // Check MongoDB connection status
+    const mongoose = require('mongoose');
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        message: 'Database connection unavailable. Please check your MongoDB connection.',
+        error: 'DATABASE_CONNECTION_ERROR'
+      });
+    }
+
     const item = await DcOrder.findById(req.params.id)
       .populate('created_by', 'name email')
       .populate('assigned_to', 'name email')
@@ -45,7 +137,20 @@ const getOne = async (req, res) => {
     if (!item) return res.status(404).json({ message: 'DC not found' });
     res.json(item);
   } catch (e) {
-    res.status(500).json({ message: e.message });
+    // Check if it's a MongoDB connection error
+    if (e.message && (e.message.includes('timeout') || e.message.includes('connection') || e.message.includes('ECONNREFUSED'))) {
+      console.error('MongoDB connection error in dc-orders getOne:', e.message);
+      return res.status(503).json({ 
+        message: 'Database connection failed. Please check your MongoDB connection settings.',
+        error: 'DATABASE_CONNECTION_ERROR',
+        details: process.env.NODE_ENV === 'development' ? e.message : undefined
+      });
+    }
+    console.error('Error in dc-orders getOne:', e);
+    res.status(500).json({ 
+      message: e.message || 'Internal server error',
+      error: 'INTERNAL_ERROR'
+    });
   }
 };
 
@@ -191,8 +296,25 @@ const create = async (req, res) => {
 
 const update = async (req, res) => {
   try {
+    console.log('📝 DcOrder UPDATE request received:', {
+      id: req.params.id,
+      status: req.body.status,
+      assigned_to: req.body.assigned_to,
+      hasProducts: !!req.body.products,
+      bodyKeys: Object.keys(req.body)
+    });
+    
     const item = await DcOrder.findById(req.params.id);
-    if (!item) return res.status(404).json({ message: 'DC not found' });
+    if (!item) {
+      console.log('❌ DcOrder not found:', req.params.id);
+      return res.status(404).json({ message: 'DC not found' });
+    }
+    
+    console.log('✅ DcOrder found:', {
+      currentStatus: item.status,
+      currentAssignedTo: item.assigned_to,
+      schoolName: item.school_name
+    });
     
     // Track history if follow_up_date, remarks, or priority is being updated
     const hasFollowUpDate = req.body.follow_up_date !== undefined;
@@ -215,10 +337,25 @@ const update = async (req, res) => {
     }
     
     // Update other fields if provided
-    const fieldsToUpdate = ['status', 'zone', 'location', 'contact_person', 'contact_mobile', 'school_name'];
+    const fieldsToUpdate = [
+      'status', 'zone', 'location', 'contact_person', 'contact_mobile', 'school_name',
+      'contact_person2', 'contact_mobile2', 'email', 'address', 'school_type',
+      'pincode', 'state', 'city', 'region', 'area',
+      'average_fee', 'branches', 'strength', 'remarks',
+      'estimated_delivery_date', 'products', 'dcRequestData'
+    ];
     fieldsToUpdate.forEach(field => {
       if (req.body[field] !== undefined) {
-        updateData[field] = req.body[field];
+        if (field === 'average_fee' || field === 'branches' || field === 'strength') {
+          // Convert to number if it's a numeric field
+          updateData[field] = req.body[field] !== '' && req.body[field] !== null 
+            ? Number(req.body[field]) 
+            : undefined;
+        } else if (field === 'estimated_delivery_date' && req.body[field]) {
+          updateData[field] = new Date(req.body[field]);
+        } else {
+          updateData[field] = req.body[field];
+        }
       }
     });
     
@@ -265,6 +402,11 @@ const update = async (req, res) => {
     }
     
     // Use findByIdAndUpdate with $set and $push to preserve all history
+    console.log('💾 Executing MongoDB update:', {
+      id: req.params.id,
+      updateData: JSON.stringify(mongoUpdate, null, 2)
+    });
+    
     const updatedItem = await DcOrder.findByIdAndUpdate(
       req.params.id,
       mongoUpdate,
@@ -272,8 +414,16 @@ const update = async (req, res) => {
     );
     
     if (!updatedItem) {
+      console.log('❌ DcOrder update failed - item not found after update');
       return res.status(404).json({ message: 'DC not found' });
     }
+    
+    console.log('✅ DcOrder updated successfully:', {
+      id: updatedItem._id,
+      newStatus: updatedItem.status,
+      newAssignedTo: updatedItem.assigned_to,
+      schoolName: updatedItem.school_name
+    });
     
     // Fetch the updated item again to ensure we have the latest history
     const refreshedItem = await DcOrder.findById(req.params.id)

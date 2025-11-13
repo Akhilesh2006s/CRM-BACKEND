@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const {
   getDCs,
   getDC,
@@ -26,6 +27,8 @@ const {
   updateDC,
   submitDCToManager,
   exportSalesVisit,
+  uploadPO,
+  uploadPOMiddleware,
 } = require('../controllers/dcController');
 const { authMiddleware } = require('../middleware/authMiddleware');
 
@@ -48,6 +51,24 @@ router.get('/hold', authMiddleware, getHoldDCs);
 
 // Stats
 router.get('/stats/employee', authMiddleware, employeeStats);
+
+// File upload - must be before /:id routes to avoid route conflicts
+router.post('/upload-po', authMiddleware, (req, res, next) => {
+  uploadPOMiddleware(req, res, (err) => {
+    if (err) {
+      // Handle multer errors
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(400).json({ message: 'File size exceeds 5MB limit' });
+        }
+        return res.status(400).json({ message: err.message });
+      }
+      // Handle other errors
+      return res.status(400).json({ message: err.message || 'File upload error' });
+    }
+    next();
+  });
+}, uploadPO);
 
 // New workflow actions
 router.post('/:id/submit-po', authMiddleware, submitPO);

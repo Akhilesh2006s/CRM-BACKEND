@@ -49,13 +49,59 @@ const getLeads = async (req, res) => {
       ];
     }
 
-    const leads = await Lead.find(filter)
-      .populate('createdBy', 'name email')
+    // Pagination support
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50; // Default 50 items per page
+    const skip = (page - 1) * limit;
+
+    // Get total count for pagination - use estimatedDocumentCount for better performance if no filters
+    // Otherwise use countDocuments with timeout
+    let total;
+    try {
+      if (Object.keys(filter).length === 0) {
+        total = await Promise.race([
+          Lead.estimatedDocumentCount(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Count timeout')), 10000))
+        ]);
+      } else {
+        total = await Promise.race([
+          Lead.countDocuments(filter),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Count timeout')), 10000))
+        ]);
+      }
+    } catch (countError) {
+      // If count times out, use a default or estimate
+      console.warn('Count query timed out, using estimate');
+      total = 0; // Will be updated as data loads
+    }
+
+    // Query with pagination - optimized for performance
+    // Only populate essential fields for list view
+    const query = Lead.find(filter)
+      .select('school_name contact_person contact_mobile zone status follow_up_date location strength createdAt remarks school_type priority assignedTo managed_by assigned_by') // Only select needed fields
+      .populate('assignedTo', 'name email') // Only populate assignedTo for list view
       .populate('managed_by', 'name email')
       .populate('assigned_by', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean() // Use lean() for better performance
+      .maxTimeMS(30000); // 30 second timeout at MongoDB level
+    
+    const leads = await query;
 
-    res.json(leads);
+    // Return paginated response
+    res.json({
+      data: leads,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
+        hasPrevPage: page > 1
+      }
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

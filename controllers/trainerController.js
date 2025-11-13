@@ -4,7 +4,7 @@ const User = require('../models/User');
 const listTrainers = async (req, res) => {
   try {
     const { q, status, type, zone, isActive } = req.query;
-    const filter = { role: { $in: ['Trainer', 'Employee'] } };
+    const filter = { role: { $in: ['Trainer', 'Executive'] } };
     if (typeof isActive !== 'undefined') filter.isActive = isActive === 'true';
     if (type) filter.trainerType = type;
     if (zone) filter.zone = zone;

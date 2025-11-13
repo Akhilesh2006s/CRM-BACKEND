@@ -1,3 +1,6 @@
+const User = require('../models/User');
+const Lead = require('../models/Lead');
+
 // @desc    Get inventory metadata options
 // @route   GET /api/metadata/inventory-options
 // @access  Private
@@ -16,30 +19,6 @@ const getInventoryOptions = async (req, res) => {
         'Skill pro',
         'Maths lab',
         'Codechamp',
-        'Brochure',
-        'Profile-Book',
-        'MathLab',
-        'FACE',
-        'NCERT',
-        'SCIENCE-LAB',
-        'BIOLOGY',
-        'PHYSICS',
-        'CHEMISTRY',
-        'SOCIAL',
-        'SCIENCE-LAB-OPERATORS',
-        'CHARTS',
-        'SY_CHARTS',
-        'DVD',
-        'SPORTS',
-        'PUZZLES',
-        'Senior_Math',
-        'Math_Lab_Charts',
-        'Stickers',
-        'Specimens',
-        'Jr_Math_Lab',
-        'Jr_Math_Lab_Cluster_Boxes_Card',
-        'SLIDES',
-        'Financial LE',
       ],
       uoms: ['Pieces (pcs)', 'boxes'],
       itemTypes: ['Books', 'Question Paper', 'Instruments'],
@@ -56,7 +35,66 @@ const getInventoryOptions = async (req, res) => {
   }
 };
 
+// @desc    Get unique states from users and leads
+// @route   GET /api/metadata/states
+// @access  Private
+const getStates = async (req, res) => {
+  try {
+    // Get unique states from users
+    const userStates = await User.distinct('state', { state: { $exists: true, $ne: null, $ne: '' } });
+    
+    // Get unique states from leads
+    const leadStates = await Lead.distinct('state', { state: { $exists: true, $ne: null, $ne: '' } });
+    
+    // Combine and get unique states, sorted alphabetically
+    const allStates = [...new Set([...userStates, ...leadStates])]
+      .filter(state => state && state.trim() !== '')
+      .sort();
+    
+    res.json(allStates);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @desc    Get unique cities from users and leads (optionally filtered by state)
+// @route   GET /api/metadata/cities?state=StateName
+// @access  Private
+const getCities = async (req, res) => {
+  try {
+    const { state } = req.query;
+    
+    // Build filter for state if provided
+    const stateFilter = state ? { state: state } : {};
+    
+    // Get unique cities from users
+    const userFilter = { city: { $exists: true, $ne: null, $ne: '' }, ...stateFilter };
+    const userCities = await User.distinct('city', userFilter);
+    
+    // Get unique cities from leads
+    const leadFilter = { city: { $exists: true, $ne: null, $ne: '' }, ...stateFilter };
+    const leadCities = await Lead.distinct('city', leadFilter);
+    
+    // Get unique assigned cities from users (these might not have state, so only if no state filter)
+    let assignedCities = [];
+    if (!state) {
+      assignedCities = await User.distinct('assignedCity', { assignedCity: { $exists: true, $ne: null, $ne: '' } });
+    }
+    
+    // Combine and get unique cities, sorted alphabetically
+    const allCities = [...new Set([...userCities, ...leadCities, ...assignedCities])]
+      .filter(city => city && city.trim() !== '')
+      .sort();
+    
+    res.json(allCities);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   getInventoryOptions,
+  getStates,
+  getCities,
 };
 

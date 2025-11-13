@@ -87,16 +87,56 @@ const getWarehouseDCList = async (req, res) => {
       if (toDate) filter.createdAt.$lte = new Date(toDate);
     }
 
-    // Fetch from DcOrder model
-    const dcOrders = await DcOrder.find(filter)
-      .populate('created_by', 'name email')
-      .populate('assigned_to', 'name email')
-      .sort({ createdAt: -1 });
+    // Fetch from DcOrder model - optimize for performance with timeout protection
+    let dcOrders = [];
+    try {
+      // First fetch without populate
+      dcOrders = await DcOrder.find(filter)
+        .select('_id dc_code school_name contact_person contact_mobile email address location zone products dc_code status school_type assigned_to created_by createdAt updatedAt pod_proof_url')
+        .sort({ createdAt: -1 })
+        .lean()
+        .maxTimeMS(20000); // 20 second timeout
+
+      // Populate if we got results (but don't fail if it times out)
+      if (dcOrders && dcOrders.length > 0) {
+        try {
+          const populatedPromise = DcOrder.find({ _id: { $in: dcOrders.map(o => o._id) } })
+            .populate('created_by', 'name email')
+            .populate('assigned_to', 'name email')
+            .sort({ createdAt: -1 })
+            .maxTimeMS(15000)
+            .lean();
+          
+          const populatedTimeout = new Promise((resolve) => 
+            setTimeout(() => resolve(dcOrders), 15000)
+          );
+          
+          const populated = await Promise.race([populatedPromise, populatedTimeout]);
+          if (populated && populated.length > 0 && Array.isArray(populated)) {
+            dcOrders = populated;
+          }
+        } catch (popErr) {
+          console.warn('Population failed for warehouse DC list, using unpopulated data:', popErr.message);
+          // Keep unpopulated dcOrders
+        }
+      }
+    } catch (queryErr) {
+      // If query times out or fails, return empty array instead of 500 error
+      console.error('Query failed for warehouse DC list:', queryErr.message);
+      if (queryErr.message && queryErr.message.includes('timed out')) {
+        console.warn('Query timed out, returning empty array');
+        return res.json([]);
+      }
+      throw queryErr; // Re-throw if it's not a timeout
+    }
 
     const transformed = dcOrders.map(transformToWarehouseDC);
+    console.log(`Returning ${transformed.length} warehouse DCs`);
     res.json(transformed);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error in getWarehouseDCList:', error);
+    // Return empty array on error to prevent frontend from breaking
+    res.json([]);
   }
 };
 

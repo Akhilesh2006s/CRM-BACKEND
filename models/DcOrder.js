@@ -24,8 +24,14 @@ const dcOrderSchema = new mongoose.Schema(
     branches: { type: Number, default: 0, min: 0 },
     zone: { type: String },
     location: { type: String },
+    pincode: { type: String },
+    state: { type: String },
+    city: { type: String },
+    region: { type: String },
+    area: { type: String },
+    average_fee: { type: Number },
     products: { type: [productSchema], default: [] },
-    priority: { type: String, enum: ['Hot', 'Warm', 'Cold'], default: 'Cold' },
+    priority: { type: String, enum: ['Hot', 'Warm', 'Cold', 'Visit Again', 'Not Met Management', 'Not Interested'], default: 'Hot' },
     lead_status: { type: String, enum: ['Hot', 'Warm', 'Cold'], default: 'Cold', index: true },
     status: {
       type: String,
@@ -57,7 +63,7 @@ const dcOrderSchema = new mongoose.Schema(
     updateHistory: [{
       follow_up_date: { type: Date },
       remarks: { type: String },
-      priority: { type: String, enum: ['Hot', 'Warm', 'Cold', 'Dropped'] },
+      priority: { type: String, enum: ['Hot', 'Warm', 'Cold', 'Dropped', 'Visit Again', 'Not Met Management', 'Not Interested'] },
       updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       updatedAt: { type: Date, default: Date.now },
     }],
@@ -77,6 +83,12 @@ const dcOrderSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Compound indexes for common query patterns
+dcOrderSchema.index({ assigned_to: 1, status: 1 });
+dcOrderSchema.index({ assigned_to: 1, follow_up_date: 1 });
+dcOrderSchema.index({ status: 1, createdAt: -1 });
+dcOrderSchema.index({ school_name: 1, contact_mobile: 1 });
 
 dcOrderSchema.pre('save', function (next) {
   if (!this.dc_code) {
