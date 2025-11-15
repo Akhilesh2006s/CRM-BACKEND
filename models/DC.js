@@ -248,6 +248,13 @@ const dcSchema = new mongoose.Schema({
       type: String,
       default: 'L2',
     },
+    specs: {
+      type: String,
+      default: 'Regular',
+    },
+    subject: {
+      type: String,
+    },
   }],
   // Location tracking for mobile app
   latitude: {
