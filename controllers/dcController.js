@@ -164,6 +164,15 @@ const getDC = async (req, res) => {
       return res.status(404).json({ message: 'DC not found' });
     }
 
+    // Ensure productDetails always have specs and subject fields
+    if (dc.productDetails && Array.isArray(dc.productDetails)) {
+      dc.productDetails = dc.productDetails.map(p => ({
+        ...p,
+        specs: p.specs || 'Regular',
+        subject: p.subject || undefined,
+      }));
+    }
+
     res.json(dc);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -1106,6 +1115,17 @@ const getPendingWarehouseDCs = async (req, res) => {
       .populate('managerId', 'name email')
       .populate('managerRequestedBy', 'name email')
       .sort({ managerRequestedAt: -1 });
+
+    // Ensure productDetails always have specs and subject fields
+    dcs.forEach(dc => {
+      if (dc.productDetails && Array.isArray(dc.productDetails)) {
+        dc.productDetails = dc.productDetails.map(p => ({
+          ...p,
+          specs: p.specs || 'Regular',
+          subject: p.subject || undefined,
+        }));
+      }
+    });
 
     res.json(dcs);
   } catch (error) {
