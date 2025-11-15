@@ -1313,6 +1313,7 @@ const getMyDCs = async (req, res) => {
           products: order.products,
           status: order.status,
           school_type: order.school_type, // Include school_type for category determination
+          createdAt: order.createdAt, // Include createdAt for client turned date
         },
         employeeId: order.assigned_to ? (typeof order.assigned_to === 'object' ? order.assigned_to._id : order.assigned_to) : employeeId,
         customerName: order.school_name,
@@ -1415,6 +1416,8 @@ const updateDC = async (req, res) => {
           price: Number(p.price) || 0,
           total: Number(p.total) || (Number(p.price) || 0) * (Number(p.strength) || 0),
           level: p.level || 'L2',
+          specs: p.specs || 'Regular', // Preserve specs
+          subject: p.subject || undefined, // Preserve subject
           availableQuantity: p.availableQuantity !== undefined && p.availableQuantity !== null ? Number(p.availableQuantity) : undefined,
           deliverableQuantity: p.deliverableQuantity !== undefined && p.deliverableQuantity !== null ? Number(p.deliverableQuantity) : undefined,
           remainingQuantity: p.remainingQuantity !== undefined && p.remainingQuantity !== null ? Number(p.remainingQuantity) : undefined,
