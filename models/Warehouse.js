@@ -16,6 +16,13 @@ const warehouseSchema = new mongoose.Schema({
   level: {
     type: String,
   },
+  specs: {
+    type: String,
+    default: 'Regular',
+  },
+  subject: {
+    type: String,
+  },
   itemType: {
     type: String,
   },
