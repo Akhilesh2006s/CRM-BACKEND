@@ -165,11 +165,12 @@ const getDC = async (req, res) => {
     }
 
     // Ensure productDetails always have specs and subject fields
+    // Only set defaults if they're actually missing (undefined/null), not if they're empty strings
     if (dc.productDetails && Array.isArray(dc.productDetails)) {
       dc.productDetails = dc.productDetails.map(p => ({
         ...p,
-        specs: p.specs || 'Regular',
-        subject: p.subject || undefined,
+        specs: (p.specs !== undefined && p.specs !== null && p.specs !== '') ? p.specs : 'Regular',
+        subject: (p.subject !== undefined && p.subject !== null && p.subject !== '') ? p.subject : undefined,
       }));
     }
 
@@ -1117,12 +1118,13 @@ const getPendingWarehouseDCs = async (req, res) => {
       .sort({ managerRequestedAt: -1 });
 
     // Ensure productDetails always have specs and subject fields
+    // Only set defaults if they're actually missing (undefined/null), not if they're empty strings
     dcs.forEach(dc => {
       if (dc.productDetails && Array.isArray(dc.productDetails)) {
         dc.productDetails = dc.productDetails.map(p => ({
           ...p,
-          specs: p.specs || 'Regular',
-          subject: p.subject || undefined,
+          specs: (p.specs !== undefined && p.specs !== null && p.specs !== '') ? p.specs : 'Regular',
+          subject: (p.subject !== undefined && p.subject !== null && p.subject !== '') ? p.subject : undefined,
         }));
       }
     });
