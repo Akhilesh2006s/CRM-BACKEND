@@ -1,5 +1,15 @@
 const mongoose = require('mongoose');
 
+const productSchema = new mongoose.Schema(
+  {
+    product_name: { type: String, required: true },
+    quantity: { type: Number, default: 1, min: 0 },
+    unit_price: { type: Number, default: 0, min: 0 },
+    expiry_date: { type: Date },
+  },
+  { _id: false }
+);
+
 const leadSchema = new mongoose.Schema(
   {
     // Core school/deal info
@@ -19,9 +29,8 @@ const leadSchema = new mongoose.Schema(
       trim: true,
     },
     products: {
-      type: String,
-      default: '',
-      trim: true,
+      type: [productSchema],
+      default: [],
     },
     location: {
       type: String,

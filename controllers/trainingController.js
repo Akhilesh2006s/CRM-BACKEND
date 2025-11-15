@@ -57,10 +57,18 @@ const getTraining = async (req, res) => {
 // @access  Private
 const createTraining = async (req, res) => {
   try {
-    const training = await Training.create({
+    // Prepare training data - only include schoolCode if it's provided and not empty
+    const trainingData = {
       ...req.body,
       createdBy: req.user._id,
-    });
+    };
+    
+    // Remove schoolCode if it's an empty string
+    if (trainingData.schoolCode === '' || trainingData.schoolCode === null || trainingData.schoolCode === undefined) {
+      delete trainingData.schoolCode;
+    }
+    
+    const training = await Training.create(trainingData);
 
     const populatedTraining = await Training.findById(training._id)
       .populate('trainerId', 'name mobile')
@@ -69,6 +77,7 @@ const createTraining = async (req, res) => {
 
     res.status(201).json(populatedTraining);
   } catch (error) {
+    console.error('Error creating training:', error);
     res.status(500).json({ message: error.message });
   }
 };

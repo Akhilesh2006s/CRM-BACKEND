@@ -1,11 +1,20 @@
 const Lead = require('../models/Lead');
 const ExcelJS = require('exceljs');
+const mongoose = require('mongoose');
 
 // @desc    Get all leads
 // @route   GET /api/leads
 // @access  Private
 const getLeads = async (req, res) => {
   try {
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        message: 'Database connection is not available. Please check your MongoDB connection.',
+        error: 'DATABASE_CONNECTION_ERROR'
+      });
+    }
+
     const { 
       status, 
       assignedTo, 
@@ -42,11 +51,28 @@ const getLeads = async (req, res) => {
     // Backward compatible: some schemas use assignedTo, others use managed_by/assigned_by
     if (assignedTo || employee) {
       const employeeId = assignedTo || employee;
-      filter.$or = [
-        { assignedTo: employeeId },
-        { managed_by: employeeId },
-        { assigned_by: employeeId },
-      ];
+      // Validate ObjectId format
+      if (employeeId && mongoose.Types.ObjectId.isValid(employeeId)) {
+        // Only add $or if we don't already have other conditions
+        if (filter.$or) {
+          // If $or already exists, merge conditions
+          filter.$and = [
+            { $or: filter.$or },
+            { $or: [
+              { managed_by: employeeId },
+              { assigned_by: employeeId },
+              { createdBy: employeeId },
+            ]}
+          ];
+          delete filter.$or;
+        } else {
+          filter.$or = [
+            { managed_by: employeeId },
+            { assigned_by: employeeId },
+            { createdBy: employeeId },
+          ];
+        }
+      }
     }
 
     // Pagination support
@@ -77,16 +103,35 @@ const getLeads = async (req, res) => {
 
     // Query with pagination - optimized for performance
     // Only populate essential fields for list view
-    const query = Lead.find(filter)
-      .select('school_name contact_person contact_mobile zone status follow_up_date location strength createdAt remarks school_type priority assignedTo managed_by assigned_by') // Only select needed fields
-      .populate('assignedTo', 'name email') // Only populate assignedTo for list view
-      .populate('managed_by', 'name email')
-      .populate('assigned_by', 'name email')
+    let query = Lead.find(filter)
+      .select('school_name contact_person contact_mobile zone status follow_up_date location strength createdAt remarks priority managed_by assigned_by createdBy') // Only select needed fields
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .lean() // Use lean() for better performance
       .maxTimeMS(30000); // 30 second timeout at MongoDB level
+    
+    // Populate user references - handle errors gracefully
+    try {
+      query = query
+        .populate({
+          path: 'managed_by',
+          select: 'name email',
+          strictPopulate: false
+        })
+        .populate({
+          path: 'assigned_by',
+          select: 'name email',
+          strictPopulate: false
+        })
+        .populate({
+          path: 'createdBy',
+          select: 'name email',
+          strictPopulate: false
+        });
+    } catch (populateError) {
+      console.warn('Error setting up populate:', populateError);
+      // Continue without populate if there's an error
+    }
     
     const leads = await query;
 
@@ -103,7 +148,12 @@ const getLeads = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error in getLeads:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      message: error.message || 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 

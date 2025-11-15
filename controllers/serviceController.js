@@ -57,10 +57,18 @@ const getService = async (req, res) => {
 // @access  Private
 const createService = async (req, res) => {
   try {
-    const service = await Service.create({
+    // Prepare service data - only include schoolCode if it's provided and not empty
+    const serviceData = {
       ...req.body,
       createdBy: req.user._id,
-    });
+    };
+    
+    // Remove schoolCode if it's an empty string
+    if (serviceData.schoolCode === '' || serviceData.schoolCode === null || serviceData.schoolCode === undefined) {
+      delete serviceData.schoolCode;
+    }
+    
+    const service = await Service.create(serviceData);
 
     const populatedService = await Service.findById(service._id)
       .populate('trainerId', 'name mobile')
@@ -69,6 +77,7 @@ const createService = async (req, res) => {
 
     res.status(201).json(populatedService);
   } catch (error) {
+    console.error('Error creating service:', error);
     res.status(500).json({ message: error.message });
   }
 };

@@ -30,6 +30,7 @@ const dcOrderSchema = new mongoose.Schema(
     region: { type: String },
     area: { type: String },
     average_fee: { type: Number },
+    strength: { type: Number, default: 0, min: 0 },
     products: { type: [productSchema], default: [] },
     priority: { type: String, enum: ['Hot', 'Warm', 'Cold', 'Visit Again', 'Not Met Management', 'Not Interested'], default: 'Hot' },
     lead_status: { type: String, enum: ['Hot', 'Warm', 'Cold'], default: 'Cold', index: true },

@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const trainingSchema = new mongoose.Schema({
-  schoolCode: { type: String, required: true },
+  schoolCode: { type: String },
   schoolName: { type: String, required: true },
   zone: { type: String },
   town: { type: String },
@@ -9,6 +9,9 @@ const trainingSchema = new mongoose.Schema({
   trainerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Assigned executive
   trainingDate: { type: Date, required: true },
+  term: { type: String }, // Term field (e.g., Term 1, Term 2, etc.)
+  trainingLevel: { type: String }, // Training level field
+  remarks: { type: String }, // Remarks field
   status: { type: String, enum: ['Scheduled', 'Completed', 'Cancelled'], default: 'Scheduled' },
   poImageUrl: { type: String }, // Purchase Order image
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -16,7 +19,7 @@ const trainingSchema = new mongoose.Schema({
   timestamps: true,
 });
 
-trainingSchema.index({ schoolCode: 1 });
+trainingSchema.index({ schoolCode: 1 }, { sparse: true });
 trainingSchema.index({ trainerId: 1 });
 trainingSchema.index({ trainingDate: 1 });
 trainingSchema.index({ status: 1 });
