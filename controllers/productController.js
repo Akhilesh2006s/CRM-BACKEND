@@ -126,14 +126,7 @@ const update = async (req, res) => {
           return res.status(400).json({ message: 'At least one spec is required when hasSpecs is true' });
         }
       }
-      // Validate each spec value
-      const allowedSpecs = ['Regular', 'Single Level only', 'Class WorkBooks Only'];
-      const invalidSpecs = updateData.specs.filter(spec => !allowedSpecs.includes(spec));
-      if (invalidSpecs.length > 0) {
-        return res.status(400).json({ 
-          message: `Invalid specs: ${invalidSpecs.join(', ')}. Allowed values: ${allowedSpecs.join(', ')}` 
-        });
-      }
+      // Specs can be any custom values - no validation needed (like subjects)
     } else if (updateData.hasSpecs !== undefined && updateData.hasSpecs) {
       // If hasSpecs is being set to true but specs not provided, check existing
       const existingSpecs = product.specs || [];

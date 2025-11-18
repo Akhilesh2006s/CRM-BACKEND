@@ -25,18 +25,8 @@ const productSchema = new mongoose.Schema(
       default: false,
     },
     specs: {
-      type: [String], // Array of specs like ['Regular', 'Single Level only']
+      type: [String], // Array of specs - can be any custom values
       default: [],
-      validate: {
-        validator: function(v) {
-          // If empty array, it's valid
-          if (!Array.isArray(v) || v.length === 0) return true;
-          // Validate each element is in the allowed list
-          const allowedSpecs = ['Regular', 'Single Level only', 'Class WorkBooks Only'];
-          return v.every(spec => allowedSpecs.includes(spec));
-        },
-        message: 'Each spec must be one of: Regular, Single Level only, Class WorkBooks Only'
-      }
     },
     prodStatus: {
       type: Number,
