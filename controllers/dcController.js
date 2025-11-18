@@ -321,11 +321,21 @@ const raiseDC = async (req, res) => {
     if (dcNotes) {
       dc.deliveryNotes = dc.deliveryNotes ? `${dc.deliveryNotes}\n${dcNotes}` : dcNotes;
     }
-    if (requestedQuantity) dc.requestedQuantity = requestedQuantity;
     // Update productDetails if provided (for lead conversion or updates)
     if (productDetails && Array.isArray(productDetails)) {
       dc.productDetails = productDetails;
+      // Recalculate requestedQuantity from productDetails if not explicitly provided
+      if (!requestedQuantity && productDetails.length > 0) {
+        const totalQty = productDetails.reduce((sum, p) => {
+          return sum + (Number(p.quantity) || Number(p.strength) || 0);
+        }, 0);
+        if (totalQty > 0) {
+          dc.requestedQuantity = totalQty;
+        }
+      }
     }
+    // Explicitly provided requestedQuantity takes priority
+    if (requestedQuantity) dc.requestedQuantity = requestedQuantity;
     
     // If PO photo is provided and DC is new, set it
     if (req.body.poPhotoUrl && !dc.poPhotoUrl) {
@@ -1447,7 +1457,10 @@ const updateDC = async (req, res) => {
         // Also update requestedQuantity if productDetails are provided
         if (dc.productDetails.length > 0) {
           const totalQuantity = dc.productDetails.reduce((sum, p) => {
-            return sum + (p.quantity || p.strength || 0);
+            // Use the larger of quantity or strength (sometimes quantity is 1 but strength is the actual value)
+            const qty = Number(p.quantity) || 0;
+            const str = Number(p.strength) || 0;
+            return sum + Math.max(qty, str);
           }, 0);
           if (totalQuantity > 0) {
             dc.requestedQuantity = totalQuantity;
