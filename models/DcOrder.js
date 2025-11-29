@@ -50,6 +50,10 @@ const dcOrderSchema = new mongoose.Schema(
     assigned_to: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
     follow_up_date: { type: Date },
     remarks: { type: String },
+    school_code: {
+      type: String,
+      trim: true,
+    },
     schoolCategory: {
       type: String,
       enum: ['Hot', 'Warm', 'Visit Again', 'Not Met Management', 'Not Interested'],
@@ -78,6 +82,34 @@ const dcOrderSchema = new mongoose.Schema(
         requestedQuantity: { type: Number },
         productDetails: { type: Array },
         employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      },
+      default: null,
+    },
+    // Pending edit request (when Executive edits a PO in closed sales)
+    pendingEdit: {
+      type: {
+        // Store all editable fields
+        school_name: { type: String },
+        contact_person: { type: String },
+        contact_mobile: { type: String },
+        contact_person2: { type: String },
+        contact_mobile2: { type: String },
+        email: { type: String },
+        address: { type: String },
+        school_type: { type: String },
+        zone: { type: String },
+        location: { type: String },
+        products: { type: [productSchema], default: [] },
+        pod_proof_url: { type: String },
+        remarks: { type: String },
+        total_amount: { type: Number },
+        // Metadata
+        requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        requestedAt: { type: Date, default: Date.now },
+        status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+        approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        approvedAt: { type: Date },
+        rejectionReason: { type: String },
       },
       default: null,
     },

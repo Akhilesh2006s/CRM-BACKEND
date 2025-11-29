@@ -1216,7 +1216,7 @@ const getMyDCs = async (req, res) => {
       try {
         const populatePromise = DC.find({ _id: { $in: dcs.map(dc => dc._id) } })
           .populate('saleId', 'customerName product quantity status poDocument')
-          .populate('dcOrderId', 'school_name contact_person contact_mobile email address location zone products dc_code status school_type')
+          .populate('dcOrderId', 'school_name school_code contact_person contact_mobile email address location zone products dc_code status school_type')
           .populate('employeeId', 'name email')
           .maxTimeMS(8000) // Shorter timeout for populate
           .lean();
@@ -1266,7 +1266,7 @@ const getMyDCs = async (req, res) => {
           assigned_to: employeeId,
           status: 'saved'
         })
-          .select('_id school_name contact_person contact_mobile email address location zone products dc_code status school_type assigned_to created_by createdAt updatedAt pod_proof_url')
+          .select('_id school_name school_code contact_person contact_mobile email address location zone products dc_code status school_type assigned_to created_by createdAt updatedAt pod_proof_url')
           .maxTimeMS(5000) // 5 seconds for full
           .lean();
 

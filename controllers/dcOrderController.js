@@ -1,5 +1,7 @@
 const DcOrder = require('../models/DcOrder');
 const DC = require('../models/DC');
+const { generateSchoolCode } = require('../utils/schoolCodeGenerator');
+const mongoose = require('mongoose');
 
 const list = async (req, res) => {
   try {
@@ -68,8 +70,9 @@ const list = async (req, res) => {
     // Query with pagination - optimized for performance
     // Only populate essential fields, skip updateHistory populate for list view
     const query = DcOrder.find(filter)
-      .select('school_name contact_person contact_mobile zone status follow_up_date location strength createdAt remarks school_type priority lead_status assigned_to created_by') // Only select needed fields
+      .select('school_name school_code contact_person contact_mobile zone status follow_up_date location strength createdAt remarks school_type priority lead_status assigned_to created_by pendingEdit') // Only select needed fields
       .populate('assigned_to', 'name email') // Only populate assigned_to for list view
+      .populate('pendingEdit.requestedBy', 'name email') // Populate pendingEdit.requestedBy for Executive Manager
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -133,7 +136,9 @@ const getOne = async (req, res) => {
     const item = await DcOrder.findById(req.params.id)
       .populate('created_by', 'name email')
       .populate('assigned_to', 'name email')
-      .populate('updateHistory.updatedBy', 'name email');
+      .populate('updateHistory.updatedBy', 'name email')
+      .populate('pendingEdit.requestedBy', 'name email')
+      .populate('pendingEdit.approvedBy', 'name email');
     if (!item) return res.status(404).json({ message: 'DC not found' });
     res.json(item);
   } catch (e) {
@@ -229,6 +234,22 @@ const getHistory = async (req, res) => {
 const create = async (req, res) => {
   try {
     const payload = { ...req.body, created_by: req.user._id };
+    
+    // Auto-generate school code if not provided
+    // Use assigned_to if available, otherwise use created_by (the user creating)
+    if (!payload.school_code) {
+      const executiveId = payload.assigned_to || req.user._id;
+      try {
+        const schoolCode = await generateSchoolCode(executiveId);
+        if (schoolCode) {
+          payload.school_code = schoolCode;
+        }
+      } catch (codeError) {
+        // If school code generation fails, log but don't fail the creation
+        // (in case the user is not an executive or cluster is not set)
+        console.warn('School code generation failed:', codeError.message);
+      }
+    }
     
     // Initialize history with creation entry if follow_up_date, remarks, or priority is provided
     if (payload.follow_up_date || payload.remarks || payload.priority) {
@@ -517,6 +538,175 @@ const hold = async (req, res) => {
   }
 };
 
-module.exports = { list, getOne, getHistory, create, update, submit, markInTransit, complete, hold };
+// Submit edit request for a closed sale (PO)
+const submitEdit = async (req, res) => {
+  try {
+    console.log('Submit edit request received for ID:', req.params.id);
+    const item = await DcOrder.findById(req.params.id);
+    if (!item) {
+      console.log('DC Order not found:', req.params.id);
+      return res.status(404).json({ message: 'DC not found' });
+    }
+
+    // Check if there's already a pending edit
+    if (item.pendingEdit && item.pendingEdit.status === 'pending') {
+      return res.status(400).json({ message: 'There is already a pending edit request for this DC' });
+    }
+
+    // Create pending edit object with the edited data
+    const pendingEdit = {
+      school_name: req.body.school_name,
+      contact_person: req.body.contact_person,
+      contact_mobile: req.body.contact_mobile,
+      contact_person2: req.body.contact_person2,
+      contact_mobile2: req.body.contact_mobile2,
+      email: req.body.email,
+      address: req.body.address,
+      school_type: req.body.school_type,
+      zone: req.body.zone,
+      location: req.body.location,
+      products: req.body.products || [],
+      pod_proof_url: req.body.pod_proof_url,
+      remarks: req.body.remarks,
+      total_amount: req.body.total_amount,
+      requestedBy: req.user._id,
+      requestedAt: new Date(),
+      status: 'pending',
+    };
+
+    const updatedItem = await DcOrder.findByIdAndUpdate(
+      req.params.id,
+      { pendingEdit },
+      { new: true, runValidators: true }
+    )
+      .populate('created_by', 'name email')
+      .populate('assigned_to', 'name email')
+      .populate('pendingEdit.requestedBy', 'name email');
+
+    res.json(updatedItem);
+  } catch (e) {
+    console.error('Submit edit error:', e);
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Approve or reject edit request (Executive Manager only)
+const approveEdit = async (req, res) => {
+  try {
+    const { action, rejectionReason } = req.body; // action: 'approve' or 'reject'
+    
+    if (!action || !['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ message: 'Invalid action. Must be "approve" or "reject"' });
+    }
+
+    const item = await DcOrder.findById(req.params.id);
+    if (!item) return res.status(404).json({ message: 'DC not found' });
+
+    if (!item.pendingEdit || item.pendingEdit.status !== 'pending') {
+      return res.status(400).json({ message: 'No pending edit request found for this DC' });
+    }
+
+    if (action === 'approve') {
+      // Apply the pending edit to the main document
+      const updateData = {
+        school_name: item.pendingEdit.school_name !== undefined ? item.pendingEdit.school_name : item.school_name,
+        contact_person: item.pendingEdit.contact_person !== undefined ? item.pendingEdit.contact_person : item.contact_person,
+        contact_mobile: item.pendingEdit.contact_mobile !== undefined ? item.pendingEdit.contact_mobile : item.contact_mobile,
+        contact_person2: item.pendingEdit.contact_person2 !== undefined ? item.pendingEdit.contact_person2 : item.contact_person2,
+        contact_mobile2: item.pendingEdit.contact_mobile2 !== undefined ? item.pendingEdit.contact_mobile2 : item.contact_mobile2,
+        email: item.pendingEdit.email !== undefined ? item.pendingEdit.email : item.email,
+        address: item.pendingEdit.address !== undefined ? item.pendingEdit.address : item.address,
+        school_type: item.pendingEdit.school_type !== undefined ? item.pendingEdit.school_type : item.school_type,
+        zone: item.pendingEdit.zone !== undefined ? item.pendingEdit.zone : item.zone,
+        location: item.pendingEdit.location !== undefined ? item.pendingEdit.location : item.location,
+        products: item.pendingEdit.products !== undefined ? item.pendingEdit.products : item.products,
+        pod_proof_url: item.pendingEdit.pod_proof_url !== undefined ? item.pendingEdit.pod_proof_url : item.pod_proof_url,
+        remarks: item.pendingEdit.remarks !== undefined ? item.pendingEdit.remarks : item.remarks,
+        total_amount: item.pendingEdit.total_amount !== undefined ? item.pendingEdit.total_amount : item.total_amount,
+        'pendingEdit.status': 'approved',
+        'pendingEdit.approvedBy': req.user._id,
+        'pendingEdit.approvedAt': new Date(),
+      };
+
+      // Update the DcOrder with approved changes
+      const updatedItem = await DcOrder.findByIdAndUpdate(
+        req.params.id,
+        updateData,
+        { new: true, runValidators: true }
+      )
+        .populate('created_by', 'name email')
+        .populate('assigned_to', 'name email')
+        .populate('pendingEdit.requestedBy', 'name email')
+        .populate('pendingEdit.approvedBy', 'name email');
+
+      // Also update related DC records if they exist
+      try {
+        const relatedDCs = await DC.find({ dcOrderId: new mongoose.Types.ObjectId(req.params.id) });
+        
+        if (relatedDCs.length > 0) {
+          const dcUpdateData = {};
+          
+          // Update DC fields that correspond to DcOrder fields
+          if (item.pendingEdit.school_name !== undefined) {
+            dcUpdateData.customerName = item.pendingEdit.school_name;
+          }
+          if (item.pendingEdit.contact_mobile !== undefined) {
+            dcUpdateData.customerPhone = item.pendingEdit.contact_mobile;
+          }
+          if (item.pendingEdit.email !== undefined) {
+            dcUpdateData.customerEmail = item.pendingEdit.email;
+          }
+          if (item.pendingEdit.address !== undefined) {
+            dcUpdateData.customerAddress = item.pendingEdit.address;
+          }
+          if (item.pendingEdit.pod_proof_url !== undefined) {
+            dcUpdateData.poPhotoUrl = item.pendingEdit.pod_proof_url;
+            dcUpdateData.poDocument = item.pendingEdit.pod_proof_url; // Also update legacy field
+          }
+          
+          // Update all related DCs
+          if (Object.keys(dcUpdateData).length > 0) {
+            await DC.updateMany(
+              { dcOrderId: new mongoose.Types.ObjectId(req.params.id) },
+              { $set: dcUpdateData }
+            );
+            console.log(`Updated ${relatedDCs.length} related DC records with approved changes`);
+          }
+        }
+      } catch (dcUpdateError) {
+        // Log error but don't fail the approval
+        console.error('Error updating related DC records:', dcUpdateError);
+      }
+
+      console.log('PO edit request approved and changes applied to DcOrder:', {
+        dcOrderId: req.params.id,
+        schoolName: updatedItem.school_name,
+        approvedBy: req.user._id
+      });
+
+      res.json(updatedItem);
+    } else {
+      // Reject the edit request
+      const updatedItem = await DcOrder.findByIdAndUpdate(
+        req.params.id,
+        {
+          'pendingEdit.status': 'rejected',
+          'pendingEdit.rejectionReason': rejectionReason || 'Rejected by Executive Manager',
+        },
+        { new: true }
+      )
+        .populate('created_by', 'name email')
+        .populate('assigned_to', 'name email')
+        .populate('pendingEdit.requestedBy', 'name email');
+
+      res.json(updatedItem);
+    }
+  } catch (e) {
+    console.error('Approve edit error:', e);
+    res.status(500).json({ message: e.message });
+  }
+};
+
+module.exports = { list, getOne, getHistory, create, update, submit, markInTransit, complete, hold, submitEdit, approveEdit };
 
 

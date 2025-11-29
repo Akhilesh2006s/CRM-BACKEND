@@ -1,6 +1,45 @@
 const mongoose = require('mongoose');
 const Expense = require('../models/Expense');
 const ExcelJS = require('exceljs');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configure multer for expense bill uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = path.join(__dirname, '../uploads/expenses');
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    // Generate unique filename with timestamp
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname);
+    cb(null, 'expense-' + uniqueSuffix + ext);
+  }
+});
+
+// File filter to accept images and PDFs
+const fileFilter = (req, file, cb) => {
+  // Accept images and PDFs
+  if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files (JPG, PNG) and PDF files are allowed'), false);
+  }
+};
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: fileFilter
+});
 
 // @desc    Get all expenses
 // @route   GET /api/expenses
@@ -72,14 +111,54 @@ const getExpense = async (req, res) => {
 // @access  Private
 const createExpense = async (req, res) => {
   try {
+    // Handle both JSON and FormData
+    // When using multer, FormData fields are parsed and available in req.body
+    let bodyData = req.body;
+    
+    // If FormData was used, parse numeric fields
+    if (req.file || (typeof bodyData.amount === 'string' && bodyData.amount)) {
+      if (bodyData.amount) {
+        bodyData.amount = parseFloat(bodyData.amount);
+      }
+      if (bodyData.approxKms) {
+        bodyData.approxKms = parseFloat(bodyData.approxKms);
+      }
+      // Remove undefined/null string values
+      Object.keys(bodyData).forEach(key => {
+        if (bodyData[key] === 'undefined' || bodyData[key] === 'null' || bodyData[key] === '') {
+          delete bodyData[key];
+        }
+      });
+    }
+
     const expenseData = {
-      ...req.body,
+      ...bodyData,
       createdBy: req.user._id,
     };
 
     // If user is an employee, automatically set employeeId to their ID
-    if (req.user.role === 'Executive' && !req.body.employeeId) {
+    if (req.user.role === 'Executive' && !expenseData.employeeId) {
       expenseData.employeeId = req.user._id;
+    }
+
+    // Handle file upload if present
+    if (req.file) {
+      expenseData.receipt = `/uploads/expenses/${req.file.filename}`;
+    }
+
+    // Normalize category to lowercase for consistency
+    if (expenseData.category) {
+      const categoryMap = {
+        'Travel': 'travel',
+        'Food': 'food',
+        'Accommodation': 'accommodation',
+        'Accomodation': 'accommodation',
+        'Other': 'others',
+        'Others': 'others',
+      };
+      if (categoryMap[expenseData.category]) {
+        expenseData.category = categoryMap[expenseData.category];
+      }
     }
 
     const expense = await Expense.create(expenseData);
@@ -95,27 +174,62 @@ const createExpense = async (req, res) => {
   }
 };
 
+// @desc    Upload expense bill
+// @route   POST /api/expenses/upload-bill
+// @access  Private
+const uploadExpenseBill = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    // Generate URL for the uploaded file
+    const fileUrl = `/uploads/expenses/${req.file.filename}`;
+
+    res.json({
+      success: true,
+      message: 'Bill uploaded successfully',
+      fileUrl: fileUrl,
+      filename: req.file.filename,
+    });
+  } catch (error) {
+    console.error('Error uploading expense bill:', error);
+    res.status(500).json({ message: error.message || 'Failed to upload bill' });
+  }
+};
+
 // @desc    Get manager pending expenses
+// Shows: Only Executive Manager Approved expenses (expenses that have been approved by Executive Manager)
+// Managers and Super Admins only see expenses after Executive Manager approval
 // @route   GET /api/expenses/manager-pending
 // @access  Private
 const getManagerPendingExpenses = async (req, res) => {
   try {
     const { employeeId, trainerId } = req.query;
+    
+    // Only show expenses that have been approved by Executive Manager
     const filter = {
-      status: 'Pending',
+      status: 'Executive Manager Approved',
     };
 
-    if (employeeId) filter.employeeId = employeeId;
-    if (trainerId) filter.trainerId = trainerId;
+    if (employeeId && employeeId !== 'all') {
+      filter.employeeId = employeeId;
+    }
+    
+    if (trainerId && trainerId !== 'all') {
+      filter.trainerId = trainerId;
+    }
 
     const expenses = await Expense.find(filter)
-      .populate('employeeId', 'name email')
+      .populate('employeeId', 'name email executiveManagerId')
       .populate('trainerId', 'name email')
       .populate('createdBy', 'name email')
+      .populate('executiveManagerApprovedBy', 'name email')
       .sort({ createdAt: -1 });
 
     res.json(expenses);
   } catch (error) {
+    console.error('Error fetching manager pending expenses:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -154,16 +268,22 @@ const getExpensesByEmployee = async (req, res) => {
   }
 };
 
-// @desc    Approve multiple expenses (manager approval)
+// @desc    Approve multiple expenses (Executive Manager or Manager approval)
 // @route   POST /api/expenses/approve-multiple
 // @access  Private
 const approveMultipleExpenses = async (req, res) => {
   try {
-    const { expenses } = req.body; // Array of { id, approvedAmount, managerRemarks }
+    const { expenses, approvalType } = req.body; // Array of { id, approvedAmount, managerRemarks }, approvalType: 'executive-manager' or 'manager'
 
     if (!Array.isArray(expenses) || expenses.length === 0) {
       return res.status(400).json({ message: 'Expenses array is required' });
     }
+
+    // Determine approval type based on user role or explicit parameter
+    const isExecutiveManager = req.user.role === 'Executive Manager';
+    const targetStatus = (approvalType === 'executive-manager' || isExecutiveManager) 
+      ? 'Executive Manager Approved' 
+      : 'Approved';
 
     const updatedExpenses = [];
 
@@ -171,10 +291,17 @@ const approveMultipleExpenses = async (req, res) => {
       const { id, approvedAmount, managerRemarks } = exp;
       
       const updateData = {
-        status: 'Manager Approved',
-        managerApprovedBy: req.user._id,
-        managerApprovedAt: new Date(),
+        status: targetStatus,
       };
+
+      if (targetStatus === 'Executive Manager Approved') {
+        updateData.executiveManagerApprovedBy = req.user._id;
+        updateData.executiveManagerApprovedAt = new Date();
+      } else if (targetStatus === 'Approved') {
+        // Manager approval - set to Approved
+        updateData.managerApprovedBy = req.user._id;
+        updateData.managerApprovedAt = new Date();
+      }
 
       if (approvedAmount !== undefined && approvedAmount !== null) {
         updateData.approvedAmount = approvedAmount;
@@ -200,6 +327,7 @@ const approveMultipleExpenses = async (req, res) => {
       )
         .populate('employeeId', 'name email')
         .populate('trainerId', 'name email')
+        .populate('executiveManagerApprovedBy', 'name email')
         .populate('managerApprovedBy', 'name email');
 
       if (updated) {
@@ -216,6 +344,90 @@ const approveMultipleExpenses = async (req, res) => {
   }
 };
 
+// @desc    Get pending expenses for Executive Manager's employees
+// @route   GET /api/expenses/executive-manager-pending
+// @access  Private
+const getExecutiveManagerPendingExpenses = async (req, res) => {
+  try {
+    // Verify user is Executive Manager
+    if (req.user.role !== 'Executive Manager') {
+      return res.status(403).json({ message: 'Access denied. Only Executive Managers can access this endpoint.' });
+    }
+
+    // Get the Executive Manager's ID from the authenticated user
+    const executiveManagerId = req.user._id;
+
+    // Find all employees assigned to this Executive Manager
+    const User = require('../models/User');
+    
+    const employees = await User.find({ 
+      executiveManagerId: executiveManagerId,
+      isActive: true 
+    }).select('_id name');
+
+    const employeeIds = employees.map(emp => emp._id);
+
+    console.log(`Executive Manager ${executiveManagerId} has ${employeeIds.length} assigned employees`);
+
+    // If no employees assigned, return empty array with message
+    if (employeeIds.length === 0) {
+      console.log('No employees assigned to Executive Manager');
+      return res.json([]);
+    }
+
+    // Get pending expenses for these employees
+    // Expenses can be linked via employeeId OR createdBy (when employee creates expense)
+    let filter = {
+      status: 'Pending',
+      $or: [
+        { employeeId: { $in: employeeIds } },
+        { createdBy: { $in: employeeIds } }
+      ]
+    };
+
+    // If specific employeeId is requested, validate it's in the assigned employees list
+    const { employeeId } = req.query;
+    if (employeeId && employeeId !== 'all') {
+      // Validate ObjectId format
+      if (!mongoose.Types.ObjectId.isValid(employeeId)) {
+        return res.status(400).json({ message: 'Invalid employee ID format' });
+      }
+
+      const requestedEmployeeId = new mongoose.Types.ObjectId(employeeId);
+
+      // Validate that the requested employee is actually assigned to this Executive Manager
+      const isAssigned = employeeIds.some(id => id.toString() === requestedEmployeeId.toString());
+      if (!isAssigned) {
+        return res.status(403).json({ message: 'Access denied. Employee not assigned to this Executive Manager.' });
+      }
+      
+      filter = {
+        status: 'Pending',
+        $or: [
+          { employeeId: requestedEmployeeId },
+          { createdBy: requestedEmployeeId }
+        ]
+      };
+    }
+
+    console.log('Filter for expenses:', JSON.stringify(filter));
+    console.log('Employee IDs being searched:', employeeIds.map(id => id.toString()));
+
+    const expenses = await Expense.find(filter)
+      .populate('employeeId', 'name email')
+      .populate('trainerId', 'name email')
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 });
+
+    console.log(`Found ${expenses.length} pending expenses for Executive Manager`);
+
+    res.json(expenses);
+  } catch (error) {
+    console.error('Error fetching Executive Manager pending expenses:', error);
+    res.status(500).json({ message: error.message || 'Failed to fetch expenses' });
+  }
+};
+
 // @desc    Get finance pending expenses
 // @route   GET /api/expenses/finance-pending
 // @access  Private
@@ -223,7 +435,7 @@ const getFinancePendingExpenses = async (req, res) => {
   try {
     const { employeeId, trainerId } = req.query;
     const filter = {
-      status: 'Manager Approved',
+      status: 'Approved',
     };
 
     if (employeeId && employeeId !== 'all') {
@@ -236,6 +448,7 @@ const getFinancePendingExpenses = async (req, res) => {
     const expenses = await Expense.find(filter)
       .populate('employeeId', 'name email')
       .populate('trainerId', 'name email')
+      .populate('executiveManagerApprovedBy', 'name email')
       .populate('managerApprovedBy', 'name email')
       .populate('createdBy', 'name email')
       .sort({ createdAt: -1 });
@@ -272,10 +485,10 @@ const approveExpense = async (req, res) => {
       status,
     };
 
-    if (status === 'Manager Approved') {
-      // Manager approval
-      updateData.managerApprovedBy = req.user._id;
-      updateData.managerApprovedAt = new Date();
+    if (status === 'Executive Manager Approved') {
+      // Executive Manager approval
+      updateData.executiveManagerApprovedBy = req.user._id;
+      updateData.executiveManagerApprovedAt = new Date();
       if (approvedAmount !== undefined) {
         updateData.approvedAmount = approvedAmount;
       }
@@ -285,9 +498,25 @@ const approveExpense = async (req, res) => {
         updateData.employeeAmount = expense.amount;
       }
     } else if (status === 'Approved') {
-      // Finance approval
-      updateData.approvedBy = req.user._id;
-      updateData.approvedAt = new Date();
+      // Check if this is Manager approval or Finance approval
+      const isManager = req.user.role === 'Manager' || req.user.role === 'Super Admin';
+      if (isManager) {
+        // Manager/Super Admin approval
+        updateData.managerApprovedBy = req.user._id;
+        updateData.managerApprovedAt = new Date();
+        if (approvedAmount !== undefined) {
+          updateData.approvedAmount = approvedAmount;
+        }
+        // Set employeeAmount if not already set
+        const expense = await Expense.findById(req.params.id);
+        if (expense && !expense.employeeAmount) {
+          updateData.employeeAmount = expense.amount;
+        }
+      } else {
+        // Finance approval
+        updateData.approvedBy = req.user._id;
+        updateData.approvedAt = new Date();
+      }
     } else if (status === 'Rejected') {
       updateData.rejectionReason = rejectionReason;
     }
@@ -299,6 +528,7 @@ const approveExpense = async (req, res) => {
     )
       .populate('employeeId', 'name email')
       .populate('trainerId', 'name email')
+      .populate('executiveManagerApprovedBy', 'name email')
       .populate('managerApprovedBy', 'name email')
       .populate('approvedBy', 'name email');
 
@@ -420,7 +650,7 @@ const exportExpenses = async (req, res) => {
       const approvedManager = expense.managerApprovedBy?.name || '';
       const approvedFin = expense.approvedBy?.name || 'Vishwam Edutech';
       const status = expense.status === 'Pending' ? 'Pending at Manager' : 
-                     expense.status === 'Manager Approved' ? 'Pending at Finance' :
+                     expense.status === 'Approved' ? 'Approved' :
                      expense.status;
 
       worksheet.addRow({
@@ -494,11 +724,14 @@ module.exports = {
   createExpense,
   approveExpense,
   getManagerPendingExpenses,
+  getExecutiveManagerPendingExpenses,
   getFinancePendingExpenses,
   getExpensesByEmployee,
   approveMultipleExpenses,
   getExpensesReport,
   exportExpenses,
   updateExpense,
+  uploadExpenseBill,
+  uploadExpenseBillMiddleware: upload.single('bill'),
 };
 

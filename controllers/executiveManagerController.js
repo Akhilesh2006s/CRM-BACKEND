@@ -239,6 +239,33 @@ const getManagerEmployees = async (req, res) => {
   }
 };
 
+// @desc    Get current Executive Manager's assigned executives
+// @route   GET /api/executive-managers/my/executives
+// @access  Private (Executive Manager only)
+const getMyExecutives = async (req, res) => {
+  try {
+    // Get the current logged-in Executive Manager's ID
+    const executiveManagerId = req.user._id;
+
+    // Verify the user is an Executive Manager
+    if (req.user.role !== 'Executive Manager') {
+      return res.status(403).json({ message: 'Access denied. Only Executive Managers can view their executives.' });
+    }
+
+    // Get all executives assigned to this manager
+    const executives = await User.find({ 
+      executiveManagerId: executiveManagerId,
+      role: 'Executive'
+    })
+      .select('-password')
+      .sort({ createdAt: -1 });
+
+    res.json(executives);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // @desc    Get Executive Manager dashboard analytics
 // @route   GET /api/executive-managers/:managerId/dashboard
 // @access  Private
@@ -582,6 +609,7 @@ module.exports = {
   assignZoneToEmployee,
   assignAreaToEmployee,
   getManagerEmployees,
+  getMyExecutives,
   getManagerDashboard,
   getManagerEmployeeLeaves,
   approveManagerEmployeeLeave,

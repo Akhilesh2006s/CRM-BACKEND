@@ -7,6 +7,7 @@ const {
   assignZoneToEmployee,
   assignAreaToEmployee,
   getManagerEmployees,
+  getMyExecutives,
   getManagerDashboard,
   getManagerEmployeeLeaves,
   approveManagerEmployeeLeave,
@@ -21,6 +22,7 @@ router.put('/:managerId/assign-employees', authMiddleware, roleMiddleware('Super
 router.put('/:managerId/state', authMiddleware, roleMiddleware('Super Admin', 'Admin'), updateManagerState);
 
 // Executive Manager routes
+router.get('/my/executives', authMiddleware, getMyExecutives);
 router.get('/:managerId/employees', authMiddleware, checkDbHealth, getManagerEmployees);
 router.get('/:managerId/dashboard', authMiddleware, checkDbHealth, getManagerDashboard);
 router.get('/:managerId/leaves', authMiddleware, checkDbHealth, getManagerEmployeeLeaves);

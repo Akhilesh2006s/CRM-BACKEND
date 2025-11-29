@@ -1,6 +1,7 @@
 const Lead = require('../models/Lead');
 const ExcelJS = require('exceljs');
 const mongoose = require('mongoose');
+const { generateSchoolCode } = require('../utils/schoolCodeGenerator');
 
 // @desc    Get all leads
 // @route   GET /api/leads
@@ -104,7 +105,7 @@ const getLeads = async (req, res) => {
     // Query with pagination - optimized for performance
     // Only populate essential fields for list view
     let query = Lead.find(filter)
-      .select('school_name contact_person contact_mobile zone status follow_up_date location strength createdAt remarks priority managed_by assigned_by createdBy') // Only select needed fields
+      .select('school_name school_code contact_person contact_mobile zone status follow_up_date location strength createdAt remarks priority managed_by assigned_by createdBy') // Only select needed fields
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -180,10 +181,28 @@ const getLead = async (req, res) => {
 // @access  Private
 const createLead = async (req, res) => {
   try {
-    const lead = await Lead.create({
+    const leadData = {
       ...req.body,
       createdBy: req.user._id,
-    });
+    };
+    
+    // Auto-generate school code if not provided
+    // Use managed_by or assigned_by if available, otherwise use the creator
+    if (!leadData.school_code) {
+      const executiveId = leadData.managed_by || leadData.assigned_by || req.user._id;
+      try {
+        const schoolCode = await generateSchoolCode(executiveId);
+        if (schoolCode) {
+          leadData.school_code = schoolCode;
+        }
+      } catch (codeError) {
+        // If school code generation fails, log but don't fail the lead creation
+        // (in case the user is not an executive or cluster is not set)
+        console.warn('School code generation failed:', codeError.message);
+      }
+    }
+    
+    const lead = await Lead.create(leadData);
 
     const populatedLead = await Lead.findById(lead._id)
       .populate('createdBy', 'name email');

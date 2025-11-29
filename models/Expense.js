@@ -10,7 +10,23 @@ const expenseSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['Office Supplies', 'Travel', 'Marketing', 'Utilities', 'Salary', 'Rent', 'Other', 'Others', 'Food'],
+    enum: [
+      'Office Supplies',
+      'Travel',
+      'travel',
+      'Marketing',
+      'Utilities',
+      'Salary',
+      'Rent',
+      'Other',
+      'Others',
+      'Food',
+      'food',
+      'Accommodation',
+      'accommodation',
+      'Accomodation',
+      'others',
+    ],
     required: true,
   },
   expItemId: {
@@ -53,6 +69,23 @@ const expenseSchema = new mongoose.Schema({
   receipt: {
     type: String,
   },
+  receiptNumber: {
+    type: String,
+  },
+  transportType: {
+    type: String,
+    enum: ['Auto', 'Bike', 'Bus', 'Car', 'Flight', 'Train'],
+  },
+  travelFrom: {
+    type: String,
+  },
+  travelTo: {
+    type: String,
+  },
+  approxKms: {
+    type: Number,
+    default: 0,
+  },
   employeeId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -66,12 +99,20 @@ const expenseSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Pending', 'Manager Approved', 'Approved', 'Rejected'],
+    enum: ['Pending', 'Executive Manager Approved', 'Manager Approved', 'Approved', 'Rejected'],
     default: 'Pending',
   },
   pendingMonth: {
     type: String,
     // Format: "November", "October", etc.
+  },
+  executiveManagerApprovedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    // Executive Manager who approved the expense
+  },
+  executiveManagerApprovedAt: {
+    type: Date,
   },
   managerApprovedBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -99,4 +140,3 @@ const expenseSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model('Expense', expenseSchema);
-

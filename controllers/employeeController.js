@@ -55,6 +55,18 @@ const createEmployee = async (req, res) => {
     if (!body.name && body.firstName) {
       body.name = `${body.firstName} ${body.lastName || ''}`.trim();
     }
+    
+    // Validate cluster uniqueness for Executive role
+    if (body.role === 'Executive' && body.cluster) {
+      const existingEmployee = await User.findOne({ 
+        role: 'Executive', 
+        cluster: body.cluster.trim() 
+      });
+      if (existingEmployee) {
+        return res.status(400).json({ message: 'Cluster value must be unique. This cluster is already assigned to another executive.' });
+      }
+    }
+    
     const employee = await User.create(body);
     const employeeData = await User.findById(employee._id).select('-password');
     res.status(201).json(employeeData);
@@ -72,6 +84,21 @@ const updateEmployee = async (req, res) => {
 
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    // Validate cluster uniqueness for Executive role if cluster is being updated
+    const newRole = req.body.role !== undefined ? req.body.role : employee.role;
+    const newCluster = req.body.cluster !== undefined ? req.body.cluster : employee.cluster;
+    
+    if (newRole === 'Executive' && newCluster) {
+      const existingEmployee = await User.findOne({ 
+        role: 'Executive', 
+        cluster: newCluster.trim(),
+        _id: { $ne: employee._id } // Exclude current employee
+      });
+      if (existingEmployee) {
+        return res.status(400).json({ message: 'Cluster value must be unique. This cluster is already assigned to another executive.' });
+      }
     }
 
     // Update fields
